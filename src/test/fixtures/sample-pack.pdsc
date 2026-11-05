@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Minimal synthetic CMSIS-Pack used by src/test/deviceDatabase.test.ts.
+
+  Layout: 1 <package> (root attributes), 1 <family> with 2 <subFamily> groups
+  and 3 <device> entries. Each device carries a flash/ram <memory>, an SVD file
+  (<debug svd="...">) and a register header (<compile header="...">).
+  This file is a test fixture only; it is not a real silicon description and
+  must not be installed as a pack.
+-->
+<package vendor="Keil" name="Sample_DFP" version="1.0.0" url="https://example.com/packs/">
+  <description>Synthetic Keil Assistant device database fixture</description>
+  <devices>
+    <family Dfamily="SampleFamily" Dvendor="Sample Semiconductor:99">
+      <subFamily DsubFamily="SampleA">
+        <device Dname="SAMPLEDEV1" Dcore="Cortex-M4" Dvendor="Sample Semiconductor:99">
+          <memory name="IROM1" type="flash" start="0x08000000" size="0x00100000"/>
+          <memory name="IRAM1" type="ram" start="0x20000000" size="0x00020000"/>
+          <debug svd="SVD/SAMPLEDEV1.svd"/>
+          <compile header="Device/Include/sampledev1.h"/>
+        </device>
+        <device Dname="SAMPLEDEV2" Dcore="Cortex-M33">
+          <memory name="IROM1" type="flash" start="0x08000000" size="0x00200000"/>
+          <memory name="IRAM1" type="ram" start="0x20000000" size="0x00040000"/>
+          <debug svd="SVD/SAMPLEDEV2.svd"/>
+          <compile header="Device/Include/sampledev2.h"/>
+        </device>
+      </subFamily>
+      <subFamily DsubFamily="SampleB">
+        <device Dname="SAMPLEDEV3" Dcore="Cortex-M3">
+          <memory name="IROM1" type="flash" start="0x08000000" size="0x00080000"/>
+          <memory name="IRAM1" type="ram" start="0x20000000" size="0x00010000"/>
+          <debug svd="SVD/SAMPLEDEV3.svd"/>
+          <compile header="Device/Include/sampledev3.h"/>
+        </device>
+      </subFamily>
+    </family>
+  </devices>
+</package>

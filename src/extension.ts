@@ -36,9 +36,12 @@ import { OPTION_TABS } from './project/options/uvOptionSchema';
 import { applyTargetOptions, readTargetOptions } from './project/options/uvOptions';
 import { applyUvoptOptions, readUvoptOptions } from './project/options/uvoptFile';
 import { buildOptionsViewData, DebuggerInfoInput } from './project/options/viewData';
-import { findDriverByDll, parseToolsIni, resolveDriverDllPath } from './project/options/keilInstall';
-import type { KeilToolsIni } from './project/options/keilInstall';
+import { cpuFamilyOf, findDriverByDll, parseToolsIni, resolveDriverDllPath } from './project/options/keilInstall';
+import type { KeilCpuFamily, KeilToolsIni } from './project/options/keilInstall';
 import { readFileVersionCached } from './project/fileVersion';
+import { DeviceCatalogService } from './project/options/deviceCatalogService';
+import { applyDeviceSelection, resolvePackRoots } from './project/options/deviceDatabase';
+import { applyDebuggerChoice } from './project/options/debuggerSelect';
 import { OptionsViewData, OptionApplyResultSummary } from './project/options/types';
 import { OptionsPanel, OptionsPanelHost } from './project/optionsPanel';
 
@@ -333,6 +336,32 @@ export function activate(context: vscode.ExtensionContext) {
     subscriber.push(...registerProjectFileCommands(projectFileServices));
 
     // 工程选项面板
+    const resolveLocalPackRoots = (): string[] => {
+        const config = vscode.workspace.getConfiguration('KeilAssistant');
+        const uv4 = config.get<string>('MDK.Uv4Path') || config.get<string>('C51.Uv4Path') || '';
+        const keilRoot = uv4 ? node_path.dirname(node_path.dirname(uv4)) : undefined;
+        let toolsIniText: string | undefined;
+        if (keilRoot) {
+            try {
+                toolsIniText = fs.readFileSync(node_path.join(keilRoot, 'TOOLS.INI'), 'utf8');
+            } catch {
+                toolsIniText = undefined;
+            }
+        }
+        return resolvePackRoots(toolsIniText, keilRoot);
+    };
+    try {
+        fs.mkdirSync(context.globalStorageUri.fsPath, { recursive: true });
+    } catch {
+        // The global storage directory normally exists already.
+    }
+    const deviceCatalogService = new DeviceCatalogService(context.globalStorageUri.fsPath, resolveLocalPackRoots);
+    deviceCatalogService.onChange(() => {
+        for (const prjID of prjExplorer.getProjectIds()) {
+            void OptionsPanel.find(prjID)?.reload();
+        }
+    });
+
     subscriber.push(vscode.commands.registerCommand('project.options', (item?: IView) => {
         const resolved = prjExplorer.getProjectAndTarget(item);
         if (!resolved) {
@@ -342,7 +371,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         const host = new KeilOptionsPanelHost(resolved.project, async () => {
             await prjExplorer.refreshProject(resolved.project.prjID);
-        });
+        }, deviceCatalogService);
         OptionsPanel.show(context.extensionUri, host, resolved.targetName);
     }));
 
@@ -2725,6 +2754,11 @@ class ProjectExplorer implements vscode.TreeDataProvider<IView>, vscode.Disposab
         return this.prjList.get(prjID);
     }
 
+    /** IDs of every project currently opened in the tree. */
+    public getProjectIds(): string[] {
+        return Array.from(this.prjList.keys());
+    }
+
     public getActiveProject(): KeilProject | undefined {
         return this.currentActiveProject;
     }
@@ -2880,7 +2914,11 @@ class KeilOptionsPanelHost implements OptionsPanelHost {
 
     private readonly refreshProject: () => Promise<void>;
 
-    constructor(private readonly project: KeilProject, refreshProject: () => Promise<void>) {
+    constructor(
+        private readonly project: KeilProject,
+        refreshProject: () => Promise<void>,
+        private readonly catalogService: DeviceCatalogService
+    ) {
         this.refreshProject = refreshProject;
     }
 
@@ -3053,6 +3091,7 @@ class KeilOptionsPanelHost implements OptionsPanelHost {
         }
 
         try {
+            const catalog = this.catalogService.ensure();
             const data = buildOptionsViewData({
                 projectLabel: this.projectLabel,
                 projectFile,
@@ -3060,7 +3099,9 @@ class KeilOptionsPanelHost implements OptionsPanelHost {
                 uvoptText,
                 activeTarget,
                 ...(enrichment.toolsIniText !== undefined ? { keilToolsIniText: enrichment.toolsIniText } : {}),
-                ...(enrichment.info !== undefined ? { debuggerInfo: enrichment.info } : {})
+                ...(enrichment.info !== undefined ? { debuggerInfo: enrichment.info } : {}),
+                ...(catalog !== undefined ? { deviceCatalog: catalog } : {}),
+                ...(this.catalogService.isScanning() ? { deviceCatalogScanning: true } : {})
             });
             return { ...data, uvoptFile: data.uvoptFile || uvoptPath };
         } catch (error) {
@@ -3085,9 +3126,15 @@ class KeilOptionsPanelHost implements OptionsPanelHost {
 
         const projectValues: Record<string, string> = {};
         const uvoptValues: Record<string, string> = {};
+        const virtualValues: Record<string, string> = {};
         for (const [id, value] of Object.entries(values)) {
             const fileKind = fieldFileById.get(id);
             if (!fileKind) {
+                // Fields generated by the panel (device / debugger pickers) are
+                // applied explicitly below because they touch several elements.
+                if (id === 'target.deviceSelect' || id === 'debug.debugger') {
+                    virtualValues[id] = value;
+                }
                 continue;
             }
             if (fileKind === 'uvopt') {
@@ -3109,6 +3156,51 @@ class KeilOptionsPanelHost implements OptionsPanelHost {
         }
 
         let nextProjectText = projectTextFile.text;
+
+        // Toolchain / TOOLS.INI context is needed by the generated pickers only.
+        let toolsInfo: KeilToolsIni | undefined;
+        let family: KeilCpuFamily | undefined;
+        let contextResolved = false;
+        const ensureContext = (): void => {
+            if (contextResolved) {
+                return;
+            }
+            contextResolved = true;
+            try {
+                const readResult = readTargetOptions(nextProjectText, targetName);
+                const uv4Path = this.getUv4Path(readResult.toolchain);
+                const keilRoot = uv4Path ? node_path.dirname(node_path.dirname(uv4Path)) : undefined;
+                const tools = this.readToolsIniCached(keilRoot);
+                toolsInfo = tools.info;
+                family = cpuFamilyOf(readResult.values['target.cpu'], readResult.toolchain);
+            } catch {
+                family = 'cortex-m';
+            }
+        };
+
+        // Generated field: device selection (Device / Vendor / PackID / Cpu / SVD ...).
+        const deviceSelection = virtualValues['target.deviceSelect'];
+        if (deviceSelection !== undefined) {
+            const catalog = this.catalogService.ensure();
+            if (!catalog) {
+                warnings.push('本机 CMSIS-Pack 设备列表尚不可用，器件型号未修改；请稍后重试');
+            } else {
+                try {
+                    const applied = applyDeviceSelection(nextProjectText, targetName, deviceSelection, catalog);
+                    nextProjectText = applied.xml;
+                    changed.push(...applied.changed);
+                    warnings.push(...applied.warnings);
+                } catch (error) {
+                    warnings.push(`修改器件型号失败：${error instanceof Error ? error.message : String(error)}`);
+                }
+            }
+        }
+
+        const uvoptPath = findCompanionUvoptFile(projectFile);
+        let uvoptTextFile: ProjectTextFile | undefined;
+        let nextUvoptText = '';
+        const debuggerSelection = virtualValues['debug.debugger'];
+
         if (Object.keys(projectValues).length > 0) {
             const applied = applyTargetOptions(nextProjectText, targetName, projectValues);
             nextProjectText = applied.xml;
@@ -3116,17 +3208,16 @@ class KeilOptionsPanelHost implements OptionsPanelHost {
             warnings.push(...applied.warnings);
         }
 
-        const uvoptPath = findCompanionUvoptFile(projectFile);
-        let uvoptTextFile: ProjectTextFile | undefined;
-        let nextUvoptText = '';
-
         if (Object.keys(uvoptValues).length > 0) {
             if (!uvoptPath) {
                 warnings.push('工程缺少 .uvoptx/.uvopt 文件，调试与时钟相关选项未保存。请先在 uVision 中打开并保存工程。');
             } else {
                 try {
-                    uvoptTextFile = readProjectTextFile(uvoptPath);
-                    const applied = applyUvoptOptions(uvoptTextFile.text, targetName, uvoptValues);
+                    if (!uvoptTextFile) {
+                        uvoptTextFile = readProjectTextFile(uvoptPath);
+                    }
+                    const base = nextUvoptText !== '' ? nextUvoptText : uvoptTextFile.text;
+                    const applied = applyUvoptOptions(base, targetName, uvoptValues);
                     nextUvoptText = applied.xml;
                     changed.push(...applied.changed);
                     warnings.push(...applied.warnings);
@@ -3134,6 +3225,39 @@ class KeilOptionsPanelHost implements OptionsPanelHost {
                     warnings.push(`读取工程选项文件失败：${error instanceof Error ? error.message : String(error)}`);
                 }
             }
+        }
+
+        // Generated field: debugger adapter selection (.uvopt DebugOpt). Applied last
+        // so it wins over raw DebugOpt/uSim/uTrg/nTsel/pMon edits sent together.
+        if (debuggerSelection !== undefined) {
+            if (!uvoptPath) {
+                warnings.push('工程缺少 .uvoptx/.uvopt 文件，调试器类型未修改');
+            } else {
+                ensureContext();
+                try {
+                    if (!uvoptTextFile) {
+                        uvoptTextFile = readProjectTextFile(uvoptPath);
+                    }
+                    const base = nextUvoptText !== '' ? nextUvoptText : uvoptTextFile.text;
+                    const applied = applyDebuggerChoice(
+                        base,
+                        targetName,
+                        debuggerSelection,
+                        toolsInfo,
+                        family || 'cortex-m'
+                    );
+                    nextUvoptText = applied.xml;
+                    changed.push(...applied.changed);
+                    warnings.push(...applied.warnings);
+                } catch (error) {
+                    warnings.push(`修改调试器类型失败：${error instanceof Error ? error.message : String(error)}`);
+                }
+            }
+        }
+
+        if (projectValues['target.device'] !== undefined && deviceSelection === undefined) {
+            // A raw Device edit is not enough to keep Cpu/pack metadata coherent.
+            warnings.push('直接修改了 Device 文本；建议使用「芯片型号（Device）」下拉以同步 Vendor/PackID/Cpu');
         }
 
         const projectChanged = nextProjectText !== projectTextFile.text;

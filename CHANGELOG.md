@@ -2,6 +2,33 @@
 
 All notable changes to the "keil-assistant-new" extension will be documented in this file.
 
+## [2.6.2] - 2026-11-05
+
+### 新增功能 🚀
+
+- **Debug 页新增「调试器类型」下拉**（`debug` 标签页）：
+  - 列表来自本机 Keil 安装 `TOOLS.INI` 的驱动表（ULINK2/ME、ULINK Pro、ULINKplus、CMSIS-DAP、J-LINK、Models、ST-Link、NULink、Pemicro、SiLabs、Altera、TI XDS 等，按 CPU 家族取对应 `CPUDLLn` 列表）
+  - 支持「使用仿真器（Use Simulator）」；选择后保存会同步维护 `.uvoptx` 的 `DebugOpt/uSim`、`uTrg`、`nTsel`、`pMon`
+  - 新增只读/可编辑字段「调试器序号（nTsel）」，并保留原有 uSim/uTrg/pMon 等细项字段
+- **Device 页新增「芯片型号」下拉**（`target` 标签页）：
+  - 扫描本机 CMSIS-Pack（`TOOLS.INI` 的 `RTEPATH`，回退 `%LOCALAPPDATA%\\Arm\\Packs` / `<KeilRoot>\\PACK`）生成设备清单，实测本机约 1 万个器件；首次后台扫描数秒并写入缓存，完成后自动刷新面板
+  - 设备数量大时，下拉框上方自动出现搜索框（按型号/厂商过滤）
+  - 选择设备并保存后，按 Pack 同步更新 `.uvprojx` 的 `Device`、`Vendor`、`PackID`、`PackURL`、`Cpu`（内核/内存/FPU/DSP/TrustZone），以及可解析到的 `SFDFile`/`RegisterFile`
+- 新增零依赖模块：`src/project/options/debuggerSelect.ts`（调试器选择读写）、`src/project/options/deviceDatabase.ts`（CMSIS-Pack 解析/扫描/设备写回）、`src/project/options/deviceCatalogService.ts`（缓存与后台扫描服务）
+
+### 优化改进 ✅
+
+- 面板为大枚举字段（>40 项，如器件列表）自动渲染搜索框，过滤不影响选中值
+- `npm run smoke` 扩展到 84 项检查：真实 Pack 扫描、器件/调试器切换写回、`.uvprojx`/`.uvoptx` 双文件校验
+- 扩展版本号更新至 2.6.2
+
+### 已知限制 ⚠️
+
+- 器件切换只更新器件/内核/内存等字段，**启动文件、Flash 下载算法与 `ArmAdsMisc/OnChipMemories` 不会自动重配**，请在 uVision 的 Options→Device/Utilities 中确认后再编译下载
+- 器件列表包含本机 Pack 缓存（`.Web`/`.Download`）中的器件；同名器件会优先使用**已安装**的 Pack，但仅存在于缓存中的器件可能写入未安装的 PackID
+- 调试器序号（`nTsel`）与 `DriverSelection` 的编号依赖本机 uVision 安装的驱动表，跨版本可能不一致
+- 首次打开 Options 面板时若缓存为空，器件列表会在后台扫描完成后自动补齐（面板会提示“正在扫描”）
+
 ## [2.6.1] - 2026-11-05
 
 ### 新增功能 🚀

@@ -114,6 +114,16 @@ describe('panelAssets.buildOptionsHtml', () => {
         assert.equal(infoBranch.includes('makeValueHandler'), false, 'info rows must not be editable');
     });
 
+    it('adds an inline search box for very large enum fields (device catalog)', () => {
+        assert.ok(HTML.includes('field-search'), 'large enums need a search box');
+        assert.ok(HTML.includes('field.options.length > 40'));
+        assert.ok(HTML.includes('options[optionIndex].hidden'), 'search must filter option visibility');
+        assert.ok(HTML.includes('搜索 '), 'search placeholder should be localized');
+        // The search box carries no value handler: it must never affect dirty tracking.
+        const searchBranch = HTML.slice(HTML.indexOf("search.className = 'field-search'"), HTML.indexOf('wrapper.insertBefore(search, control)'));
+        assert.equal(searchBranch.includes('makeValueHandler'), false);
+    });
+
     it('contains the webview side of the message protocol', () => {
         assert.ok(HTML.includes('acquireVsCodeApi'));
         assert.ok(HTML.includes("post({ type: 'ready' })"));

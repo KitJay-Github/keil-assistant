@@ -550,6 +550,89 @@ async function main() {
         }
     }
 
+    /* --- generated pickers: device catalog + debugger adapter --- */
+    const pickerField = (data, id) => {
+        for (const tab of data.tabs || []) {
+            for (const section of tab.sections || []) {
+                const found = (section.fields || []).find((entry) => entry.id === id);
+                if (found) return found;
+            }
+        }
+        return undefined;
+    };
+    const firstDeviceField = initMessage ? pickerField(initMessage.data, 'target.deviceSelect') : undefined;
+    check('device picker rendered', !!firstDeviceField);
+    check(
+        'device picker explains the pack scan',
+        !!firstDeviceField
+            && (/正在扫描/.test(firstDeviceField.hint || '')
+                || (firstDeviceField.options || []).length > 1
+                || (initMessage.data.warnings || []).some((warning) => /CMSIS-Pack/.test(warning))),
+        firstDeviceField && firstDeviceField.hint
+    );
+    const firstDebuggerField = initMessage ? pickerField(initMessage.data, 'debug.debugger') : undefined;
+    check('debugger picker rendered', !!firstDebuggerField);
+    check(
+        'debugger picker lists the local drivers',
+        !!firstDebuggerField && (firstDebuggerField.options || []).length >= 13,
+        firstDebuggerField && String((firstDebuggerField.options || []).length)
+    );
+    check(
+        'debugger picker marks the current driver',
+        !!firstDebuggerField && /ULINK2\/ME Cortex Debugger/.test(firstDebuggerField.hint || '')
+            || (firstDebuggerField && (firstDebuggerField.options || []).some((option) => option.value === firstDebuggerField.value)),
+        firstDebuggerField && firstDebuggerField.hint
+    );
+
+    // The CMSIS-Pack scan runs in the background and reloads the panel when done.
+    postedMessages.length = 0;
+    await waitUntil(
+        'device catalog loaded',
+        () => postedMessages.some((message) => {
+            if (!message || message.type !== 'init') return false;
+            const field = pickerField(message.data, 'target.deviceSelect');
+            return !!field && Array.isArray(field.options) && field.options.length > 1000;
+        }),
+        60000
+    );
+    const catalogInit = postedMessages
+        .filter((message) => message && message.type === 'init')
+        .map((message) => message.data)
+        .find((data) => {
+            const field = pickerField(data, 'target.deviceSelect');
+            return !!field && Array.isArray(field.options) && field.options.length > 1000;
+        });
+    check('device catalog scan completed', !!catalogInit);
+    if (catalogInit) {
+        const deviceField = pickerField(catalogInit, 'target.deviceSelect');
+        check('device picker exposes many devices', deviceField.options.length > 1000, String(deviceField.options.length));
+        check('device picker includes STM32F103CB', deviceField.options.some((option) => option.value === 'STM32F103CB'));
+        check('device catalog hint shows pack count', /Pack/.test(deviceField.hint || ''), deviceField.hint);
+    }
+
+    // Change the device and the debugger through the generated pickers.
+    postedMessages.length = 0;
+    webviewReceiveHandler({
+        type: 'save',
+        target: 'Demo_Debug',
+        values: { 'target.deviceSelect': 'STM32F103CB', 'debug.debugger': '4' }
+    });
+    await waitUntil('picker save posted', () => postedMessages.some((message) => message && message.type === 'saved'), 20000);
+    const pickerSaved = postedMessages.find((message) => message && message.type === 'saved');
+    check('picker save finished', !!pickerSaved, JSON.stringify((pickerSaved && pickerSaved.changed) || []));
+    const projectAfterPicker = readProject('arm-ac6.uvprojx');
+    check('device written to .uvprojx', projectAfterPicker.indexOf('<Device>STM32F103CB</Device>') !== -1);
+    check('vendor written to .uvprojx', projectAfterPicker.indexOf('<Vendor>STMicroelectronics</Vendor>') !== -1);
+    check('cpu rebuilt from the pack', /CPUTYPE\("Cortex-M3"\)/.test(projectAfterPicker), (projectAfterPicker.match(/<Cpu>[^<]*<\/Cpu>/) || [])[0]);
+    const uvoptAfterPicker = readProject('arm-ac6.uvoptx');
+    check('debugger nTsel written', uvoptAfterPicker.indexOf('<nTsel>4</nTsel>') !== -1);
+    check(
+        'debugger pMon written',
+        /<pMon>[^<]*JL2CM3[^<]*<\/pMon>/i.test(uvoptAfterPicker),
+        (uvoptAfterPicker.match(/<pMon>[^<]*<\/pMon>/) || [])[0]
+    );
+    check('debugger mode set to target', uvoptAfterPicker.indexOf('<uSim>0</uSim>') !== -1 && uvoptAfterPicker.indexOf('<uTrg>1</uTrg>') !== -1);
+
     postedMessages.length = 0;
     const beforeSave = readProject('arm-ac6.uvprojx');
     webviewReceiveHandler({

@@ -15,6 +15,9 @@ import { OPTION_TABS, getOptionField, isFieldDeclaredFor } from './uvOptionSchem
 import { readTargetValuesFromDocument, toolchainLabel } from './uvOptions';
 import { findUvoptFileForProject, readUvoptOptions } from './uvoptFile';
 import { cpuFamilyOf, driverSelectionOptions, parseToolsIni } from './keilInstall';
+import type { KeilCpuFamily } from './keilInstall';
+import { debuggerOptions, readDebuggerChoice } from './debuggerSelect';
+import { DeviceCatalog, deviceOptions as buildDeviceOptionList } from './deviceDatabase';
 import { buildMcuInfoRows, McuInfoRow } from './mcuInfo';
 import {
     OptionApplyResult,
@@ -70,6 +73,10 @@ export interface BuildOptionsViewDataInput {
     keilToolsIniText?: string;
     /** Debugger / flash driver information resolved by the host. */
     debuggerInfo?: DebuggerInfoInput;
+    /** Device catalog scanned from the local CMSIS-Packs (host provided). */
+    deviceCatalog?: DeviceCatalog;
+    /** True while the host is scanning the packs in the background. */
+    deviceCatalogScanning?: boolean;
 }
 
 /** Same shape as `OptionApplyResult` but without the XML payload. */
@@ -89,6 +96,13 @@ interface BuildTabsContext {
     mcuRows?: McuInfoRow[];
     /** Host resolved debugger information; `undefined` when not available. */
     debuggerInfo?: DebuggerInfoInput;
+    /** Device picker options (CMSIS-Pack catalog). */
+    deviceOptions?: OptionEnumValue[];
+    deviceOptionsHint?: string;
+    /** Debugger adapter picker (`.uvopt` DebugOpt). */
+    debuggerChoices?: OptionEnumValue[];
+    debuggerValue?: string;
+    debuggerHint?: string;
 }
 
 function describeError(error: unknown): string {
@@ -153,6 +167,53 @@ function buildMcuSection(rows: McuInfoRow[]): OptionSectionView {
         title: 'MCU 信息（只读）',
         description: '根据工程中的器件与 Cpu 描述自动解析，仅供参考；修改请使用 uVision 的 Device 选择。',
         fields: rows.map((row) => infoFieldView(row.id, row.label, row.value))
+    };
+}
+
+/** Device picker backed by the local CMSIS-Pack catalog. */
+function buildDeviceSection(context: BuildTabsContext): OptionSectionView {
+    const field: OptionFieldView = {
+        id: 'target.deviceSelect',
+        label: '芯片型号（Device）',
+        type: 'enum',
+        value: context.uvprojxValues['target.device'] || ''
+    };
+    if (context.deviceOptions && context.deviceOptions.length > 0) {
+        field.options = context.deviceOptions;
+    }
+    if (context.deviceOptionsHint) {
+        field.hint = context.deviceOptionsHint;
+    }
+    return {
+        id: 'target.devicePicker',
+        title: '器件型号选择',
+        description:
+            '列表来自本机 CMSIS-Pack。保存后会同步更新 Device、Vendor、PackID、Cpu（内存与内核）' +
+            '以及可以解析到的 SVD/寄存器头文件；启动文件与 Flash 下载算法请在 uVision 中确认。',
+        fields: [field]
+    };
+}
+
+/** Debugger adapter picker backed by the local TOOLS.INI driver list. */
+function buildDebuggerPickerSection(context: BuildTabsContext): OptionSectionView {
+    const field: OptionFieldView = {
+        id: 'debug.debugger',
+        label: '调试器类型（Use）',
+        type: 'enum',
+        value: context.debuggerValue || 'unknown'
+    };
+    if (context.debuggerChoices && context.debuggerChoices.length > 0) {
+        field.options = context.debuggerChoices;
+    }
+    if (context.debuggerHint) {
+        field.hint = context.debuggerHint;
+    }
+    return {
+        id: 'debug.debuggerPicker',
+        title: '调试器选择',
+        description:
+            '写入 .uvoptx 的 DebugOpt（uSim / uTrg / nTsel / pMon）；列表顺序来自本机 TOOLS.INI 的驱动列表。',
+        fields: [field]
     };
 }
 
@@ -283,10 +344,20 @@ function buildTabs(context: BuildTabsContext): OptionTabView[] {
     });
 
     if (context.toolchain) {
+        const targetTab = tabs.find((tab) => tab.id === 'target');
+        if (targetTab && context.deviceOptions && context.deviceOptions.length > 0) {
+            targetTab.sections.unshift(buildDeviceSection(context));
+        }
         if (context.mcuRows && context.mcuRows.length > 0) {
-            const targetTab = tabs.find((tab) => tab.id === 'target');
             if (targetTab) {
                 targetTab.sections.unshift(buildMcuSection(context.mcuRows));
+            }
+        }
+
+        if (context.debuggerChoices && context.debuggerChoices.length > 0) {
+            const debugTab = tabs.find((tab) => tab.id === 'debug');
+            if (debugTab) {
+                debugTab.sections.unshift(buildDebuggerPickerSection(context));
             }
         }
 
@@ -470,13 +541,40 @@ export function buildOptionsViewData(input: BuildOptionsViewDataInput): OptionsV
 
     let driverOptions: OptionEnumValue[] | undefined;
     let mcuRows: McuInfoRow[] | undefined;
+    let deviceChoices: OptionEnumValue[] | undefined;
+    let deviceChoicesHint: string | undefined;
+    let debuggerChoices: OptionEnumValue[] | undefined;
+    let debuggerValue: string | undefined;
+    let debuggerHint: string | undefined;
     if (toolchain) {
-        const family = cpuFamilyOf(uvprojxValues['target.cpu'], toolchain);
+        const family: KeilCpuFamily = cpuFamilyOf(uvprojxValues['target.cpu'], toolchain);
         driverOptions = driverSelectionOptions(tools, family);
         try {
             mcuRows = buildMcuInfoRows(uvprojxValues, toolchain);
         } catch {
             mcuRows = [];
+        }
+
+        // Device picker: list comes from the local CMSIS-Pack catalog.
+        deviceChoices = buildDeviceOptionList(input.deviceCatalog, uvprojxValues['target.device']);
+        if (input.deviceCatalog) {
+            deviceChoicesHint = `${input.deviceCatalog.devices.length} 个器件 / ${input.deviceCatalog.packs.length} 个 Pack`;
+        } else {
+            deviceChoicesHint = input.deviceCatalogScanning
+                ? '正在扫描本机 CMSIS-Pack…'
+                : '未找到本机 CMSIS-Pack，仅显示当前器件';
+        }
+
+        // Debugger picker: list comes from the local TOOLS.INI and is stored in .uvopt.
+        if ((toolchain === 'ARM' || toolchain === 'ARM6') && uvoptState === 'available' && input.uvoptText !== undefined) {
+            debuggerChoices = debuggerOptions(tools, family);
+            const choice = readDebuggerChoice(input.uvoptText, activeTarget, tools, family);
+            debuggerValue = choice.value;
+            if (choice.mode === 'simulator') {
+                debuggerHint = '使用仿真器（uSim=1）';
+            } else if (choice.name) {
+                debuggerHint = choice.dll ? `${choice.name}（${choice.dll}）` : choice.name;
+            }
         }
     }
 
@@ -488,9 +586,22 @@ export function buildOptionsViewData(input: BuildOptionsViewDataInput): OptionsV
         ...(uvoptReason !== undefined ? { uvoptReason } : {}),
         ...(driverOptions !== undefined ? { driverOptions } : {}),
         ...(mcuRows !== undefined ? { mcuRows } : {}),
-        ...(input.debuggerInfo !== undefined ? { debuggerInfo: input.debuggerInfo } : {})
+        ...(input.debuggerInfo !== undefined ? { debuggerInfo: input.debuggerInfo } : {}),
+        ...(deviceChoices !== undefined ? { deviceOptions: deviceChoices } : {}),
+        ...(deviceChoicesHint !== undefined ? { deviceOptionsHint: deviceChoicesHint } : {}),
+        ...(debuggerChoices !== undefined ? { debuggerChoices } : {}),
+        ...(debuggerValue !== undefined ? { debuggerValue } : {}),
+        ...(debuggerHint !== undefined ? { debuggerHint } : {})
     };
     const tabs = buildTabs(context);
+    const extraWarnings: string[] = [];
+    if (toolchain && !input.deviceCatalog) {
+        extraWarnings.push(
+            input.deviceCatalogScanning
+                ? '正在扫描本机 CMSIS-Pack 设备列表，完成后面板会自动刷新'
+                : '未找到本机 CMSIS-Pack，器件列表仅包含当前器件'
+        );
+    }
     return {
         projectLabel: input.projectLabel,
         projectFile: input.projectFile,
@@ -502,7 +613,7 @@ export function buildOptionsViewData(input: BuildOptionsViewDataInput): OptionsV
         warnings: buildWarnings(
             context,
             countUnavailable(tabs),
-            collectInputWarnings(input, tools !== undefined)
+            collectInputWarnings(input, tools !== undefined).concat(extraWarnings)
         ),
         readonly: false
     };

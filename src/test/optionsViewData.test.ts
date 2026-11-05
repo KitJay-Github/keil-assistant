@@ -60,11 +60,16 @@ describe('OptionsViewData', () => {
                 `missing schema field ${schemaField.id}`
             );
         }
-        // The panel additionally renders generated read-only information rows
-        // (MCU info / resolved driver selection); they must not replace schema fields.
+        // The panel additionally renders generated fields (MCU info rows, driver
+        // meaning row, device/debugger pickers); they must not replace schema fields.
         const generatedFields = renderedFields.filter((entry) => !schemaFieldIds.has(entry.id));
-        assert.ok(generatedFields.length > 0, 'expected generated info fields');
-        assert.ok(generatedFields.every((entry) => entry.type === 'info'), 'generated fields must be info rows');
+        assert.ok(generatedFields.length > 0, 'expected generated fields');
+        for (const generated of generatedFields) {
+            assert.ok(
+                generated.type === 'info' || generated.type === 'enum',
+                `generated field ${generated.id} has unexpected type ${generated.type}`
+            );
+        }
         assert.equal(view.readonly, false);
         assert.equal(view.readonlyReason, undefined);
         assert.equal(view.projectLabel, 'Demo');

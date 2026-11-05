@@ -306,6 +306,21 @@ button.btn:focus-visible {
     font-weight: 600;
 }
 
+.field-search {
+    padding: 3px 6px;
+    color: var(--vscode-input-foreground);
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 2px;
+    font-family: inherit;
+    font-size: 0.92em;
+}
+
+.field-search:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
 .field.unavailable > .field-label,
 .field.readonly > .field-label {
     opacity: 0.75;
@@ -805,6 +820,26 @@ const OPTIONS_SCRIPT = `
 
         var control = createControl(field, controlId, disabled);
         wrapper.appendChild(control);
+
+        // Large enums (e.g. the CMSIS-Pack device catalog) get an inline search box
+        // that filters the visible <option> entries without changing the value.
+        if (field.type === 'enum' && control.tagName === 'SELECT'
+            && Array.isArray(field.options) && field.options.length > 40) {
+            var search = document.createElement('input');
+            search.type = 'search';
+            search.className = 'field-search';
+            search.placeholder = '搜索 ' + field.options.length + ' 个选项…';
+            search.disabled = disabled;
+            search.addEventListener('input', function () {
+                var query = search.value.trim().toLowerCase();
+                var options = control.options;
+                for (var optionIndex = 0; optionIndex < options.length; optionIndex += 1) {
+                    var optionText = options[optionIndex].textContent || '';
+                    options[optionIndex].hidden = query !== '' && optionText.toLowerCase().indexOf(query) === -1;
+                }
+            });
+            wrapper.insertBefore(search, control);
+        }
 
         if (field.unavailable && field.unavailableReason) {
             var note = document.createElement('span');

@@ -511,3 +511,59 @@ export class OptionsPanel {
 
 - `npm test` 全绿（207 个用例）；`npm run smoke` 新增 MCU/驱动列表/调试器版本断言（本机存在 Keil 时启用，68 项检查）。
 - 版本号升至 `2.6.1`。
+
+## 8. 附录：2.6.2 增量（调试器类型 / 芯片型号可选）
+
+### 8.1 调试器类型（v2.6.1 遗留项）
+
+uVision Debug 页的 “Use:” 下拉对应 `.uvopt(x)` 的 `TargetOption/DebugOpt`：
+
+| 元素 | 含义 |
+| --- | --- |
+| `uSim` / `uTrg` | 仿真 / 目标二选一（1/0） |
+| `nTsel` | 该调试器在本机 `TOOLS.INI` 对应 `CPUDLLn` 列表中的 **0 基序号** |
+| `pMon` | 调试器驱动 DLL（如 `Segger\JL2CM3.dll`） |
+
+新增 `src/project/options/debuggerSelect.ts`：
+
+```ts
+export const SIMULATOR_VALUE = 'sim';
+export function debuggerList(tools: KeilToolsIni | undefined, family: KeilCpuFamily): DebuggerDescriptor[];
+export function debuggerOptions(tools, family): OptionEnumValue[];
+export function readDebuggerChoice(uvoptText, targetName, tools, family): DebuggerChoice;
+export function applyDebuggerChoice(uvoptXml, targetName, value, tools, family): DebuggerApplyResult;
+```
+
+- 列表按 CPU 家族（`SARM.DLL`/`SARMCM3.DLL`/`SARMCR4.DLL`/`SARMV8M.DLL`）取本机 TDRV 顺序，无 `TOOLS.INI` 时回退内置 MDK 5 默认表；
+- `sim` 只写 `uSim/uTrg`；序号写 `uSim=0/uTrg=1/nTsel/pMon`；只改 4 个元素，其余字节不变；
+- 面板字段 `debug.debugger`（`debug` 标签页新分区），保存时由宿主在**处理完其他 `.uvopt` 字段之后**调用，避免相互覆盖；
+- 同时新增可编辑字段 `debug.uvoptTargetSel`（`DebugOpt/nTsel`）。
+
+### 8.2 芯片型号（CMSIS-Pack）
+
+新增 `src/project/options/deviceDatabase.ts` + `deviceCatalogService.ts`：
+
+```ts
+export function parsePdscDevices(pdscText, pdscPath): { pack: DevicePackInfo; devices: DeviceEntry[] };
+export async function scanDeviceCatalog(packRoots, onProgress?): Promise<DeviceCatalog>;   // 分片让出事件循环
+export function resolvePackRoots(toolsIniText, keilRoot): string[];                        // RTEPATH + 常见回退
+export function readCachedCatalog(cacheFile) / writeCachedCatalog(cacheFile, catalog): void;
+export function deviceOptions(catalog, currentDevice?): OptionEnumValue[];
+export function readDeviceDetails(entry): { flash?, ram?, svd?, header?, warnings };
+export function buildCpuString(entry, currentCpu): string;
+export function applyDeviceSelection(xml, targetName, deviceName, catalog): DeviceApplyResult;
+```
+
+- 扫描本机所有 `.pdsc`（本机 2415 个文件 / 135 MB / 约 4 秒，24k device 标签、约 10.7k 唯一器件），按厂商+型号去重，按 mtime 语义保留较新 Pack；
+- `DeviceCatalogService` 负责磁盘缓存（`<globalStorage>/keil-device-catalog.json`，7 天有效、Pack 根变化即失效）与后台扫描；扫描完成后通过 `onChange` 让打开的面板自动 `reload()`；
+- 面板字段 `target.deviceSelect`（`target` 标签页新分区）为大枚举（>40 项），webview 自动渲染搜索框过滤；
+- 保存时写回 `TargetCommonOption` 的 `Device/Vendor/PackID/PackURL/Cpu`（`IRAM(...) IROM(...) CPUTYPE("...") [FPU2] [DSP] [TZ] CLOCK(保留原值) ELITTLE`），并提供 `SFDFile`/`RegisterFile` 时一并更新；
+- **不自动重配**启动文件、Flash 算法与 `ArmAdsMisc/OnChipMemories`，保存后给出提示要求到 uVision 中确认。
+
+### 8.3 面板与测试
+
+- `panelAssets`：大枚举自动生成 `field-search` 搜索框（不参与脏值跟踪）。
+- `BuildOptionsViewDataInput` 新增 `deviceCatalog` / `deviceCatalogScanning`；`BuildTabsContext` 新增设备/调试器选择上下文。
+- 新测试：`debuggerSelect.test.ts`（21）、`deviceDatabase.test.ts`、`optionsPickers.test.ts`（4）、`panelAssets.test.ts`（搜索框）与 `optionsViewData.test.ts`（生成字段类型）更新。
+- `npm run smoke` 扩展到 **84 项**：真实 Pack 扫描后设备数 >1000、含 `STM32F103CB`；通过面板保存把器件改为 `STM32F103CB`、调试器改为序号 4，校验 `.uvprojx` 的 Device/Vendor/Cpu 与 `.uvoptx` 的 `nTsel/pMon/uSim/uTrg`。
+- 版本号升至 `2.6.2`；`npm test` 265 个用例全绿。

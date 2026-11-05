@@ -843,6 +843,12 @@ const DEBUG_TAB: OptionTabDef = {
                 uvoptField('debug.uvoptMonitor', '调试监视器驱动（pMon）', 'DebugOpt/pMon', 'string',
                     all(opt('DebugOpt', 'pMon')), {
                     placeholder: 'BIN\\UL2CM3.DLL'
+                }),
+                uvoptField('debug.uvoptTargetSel', '调试器序号（nTsel）', 'DebugOpt/nTsel', 'number',
+                    all(opt('DebugOpt', 'nTsel')), {
+                    numeric: { min: -1, max: 128, step: 1 },
+                    tooltip: 'uVision Debug 页「Use:」下拉的调试器序号（本机 TOOLS.INI 的 CPUDLL 列表序号）。' +
+                        '使用面板中的「调试器类型」下拉时，会自动同时维护 nTsel、uSim/uTrg 与 pMon。'
                 })
             ]
         },
