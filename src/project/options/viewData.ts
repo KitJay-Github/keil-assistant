@@ -18,6 +18,15 @@ import { cpuFamilyOf, driverSelectionOptions, parseToolsIni } from './keilInstal
 import type { KeilCpuFamily } from './keilInstall';
 import { debuggerOptions, readDebuggerChoice } from './debuggerSelect';
 import { DeviceCatalog, deviceOptions as buildDeviceOptionList } from './deviceDatabase';
+import {
+    JLINK_CLOCK_OPTIONS,
+    JLINK_CONNECT_OPTIONS,
+    JLINK_INTERFACE_OPTIONS,
+    JLINK_PORT_OPTIONS,
+    JLINK_RESET_OPTIONS,
+    JlinkSettings,
+    readJlinkSettings
+} from './jlinkSettings';
 import { buildMcuInfoRows, McuInfoRow } from './mcuInfo';
 import {
     OptionApplyResult,
@@ -103,6 +112,8 @@ interface BuildTabsContext {
     debuggerChoices?: OptionEnumValue[];
     debuggerValue?: string;
     debuggerHint?: string;
+    /** J-Link adapter settings read from the target driver registry. */
+    jlink?: JlinkSettings;
 }
 
 function describeError(error: unknown): string {
@@ -214,6 +225,86 @@ function buildDebuggerPickerSection(context: BuildTabsContext): OptionSectionVie
         description:
             '写入 .uvoptx 的 DebugOpt（uSim / uTrg / nTsel / pMon）；列表顺序来自本机 TOOLS.INI 的驱动列表。',
         fields: [field]
+    };
+}
+
+function optionViews<T extends { value: string; label: string }>(options: T[]): OptionEnumValue[] {
+    return options.map((option) => ({ value: option.value, label: option.label }));
+}
+
+/** J-Link / J-Trace adapter settings stored in the target driver registry. */
+function buildJlinkSection(settings: JlinkSettings): OptionSectionView {
+    const fields: OptionFieldView[] = [
+        {
+            id: 'jlink.port',
+            label: '调试接口（Port）',
+            hint: 'JTAG / SW',
+            type: 'enum',
+            value: settings.port || 'sw',
+            options: optionViews(JLINK_PORT_OPTIONS)
+        },
+        {
+            id: 'jlink.maxClock',
+            label: '最大时钟（Max Clock）',
+            hint: '调试连接速度',
+            type: 'enum',
+            value: settings.maxClockKhz !== undefined ? String(settings.maxClockKhz) : '',
+            options: JLINK_CLOCK_OPTIONS.map((option) => ({ value: String(option.khz), label: option.label }))
+        },
+        {
+            id: 'jlink.connect',
+            label: '连接方式（Connect）',
+            hint: '连接目标时的行为',
+            type: 'enum',
+            value: settings.connect || 'normal',
+            options: optionViews(JLINK_CONNECT_OPTIONS)
+        },
+        {
+            id: 'jlink.reset',
+            label: '复位方式（Reset）',
+            hint: '目标复位策略',
+            type: 'enum',
+            value: settings.reset || 'normal',
+            options: optionViews(JLINK_RESET_OPTIONS)
+        },
+        {
+            id: 'jlink.resetAfter',
+            label: '连接后复位（Reset after Connect）',
+            hint: '连接完成后执行复位',
+            type: 'bool',
+            value: settings.resetAfter === false ? '0' : '1'
+        },
+        {
+            id: 'jlink.interface',
+            label: '接口（Interface）',
+            hint: 'USB / TCP/IP',
+            type: 'enum',
+            value: settings.interface || 'usb',
+            options: JLINK_INTERFACE_OPTIONS
+        },
+        {
+            id: 'jlink.ip',
+            label: 'TCP/IP 地址',
+            hint: '仅 TCP/IP 接口使用',
+            type: 'string',
+            value: settings.ip || '127.0.0.1',
+            placeholder: '127.0.0.1'
+        },
+        {
+            id: 'jlink.tcpPort',
+            label: 'TCP/IP 端口',
+            hint: '0 表示默认端口',
+            type: 'number',
+            value: settings.tcpPort !== undefined ? String(settings.tcpPort) : '0'
+        }
+    ];
+    return {
+        id: 'debug.jlink',
+        title: '调试器适配器设置（J-Link / J-Trace）',
+        description:
+            '写入 .uvoptx 的 TargetDriverDllRegistry（JL2CM3）参数串；' +
+            '连接/复位方式按 uVision 驱动参数编码，保存后建议在 uVision 的 Debug→Settings 中核对。',
+        fields
     };
 }
 
@@ -358,6 +449,13 @@ function buildTabs(context: BuildTabsContext): OptionTabView[] {
             const debugTab = tabs.find((tab) => tab.id === 'debug');
             if (debugTab) {
                 debugTab.sections.unshift(buildDebuggerPickerSection(context));
+            }
+        }
+
+        if (context.jlink) {
+            const debugTab = tabs.find((tab) => tab.id === 'debug');
+            if (debugTab) {
+                debugTab.sections.push(buildJlinkSection(context.jlink));
             }
         }
 
@@ -546,6 +644,7 @@ export function buildOptionsViewData(input: BuildOptionsViewDataInput): OptionsV
     let debuggerChoices: OptionEnumValue[] | undefined;
     let debuggerValue: string | undefined;
     let debuggerHint: string | undefined;
+    let jlinkSettings: JlinkSettings | undefined;
     if (toolchain) {
         const family: KeilCpuFamily = cpuFamilyOf(uvprojxValues['target.cpu'], toolchain);
         driverOptions = driverSelectionOptions(tools, family);
@@ -575,6 +674,13 @@ export function buildOptionsViewData(input: BuildOptionsViewDataInput): OptionsV
             } else if (choice.name) {
                 debuggerHint = choice.dll ? `${choice.name}（${choice.dll}）` : choice.name;
             }
+            if (uvoptState === 'available' && input.uvoptText !== undefined) {
+                try {
+                    jlinkSettings = readJlinkSettings(input.uvoptText, activeTarget);
+                } catch {
+                    jlinkSettings = undefined;
+                }
+            }
         }
     }
 
@@ -591,7 +697,8 @@ export function buildOptionsViewData(input: BuildOptionsViewDataInput): OptionsV
         ...(deviceChoicesHint !== undefined ? { deviceOptionsHint: deviceChoicesHint } : {}),
         ...(debuggerChoices !== undefined ? { debuggerChoices } : {}),
         ...(debuggerValue !== undefined ? { debuggerValue } : {}),
-        ...(debuggerHint !== undefined ? { debuggerHint } : {})
+        ...(debuggerHint !== undefined ? { debuggerHint } : {}),
+        ...(jlinkSettings !== undefined ? { jlink: jlinkSettings } : {})
     };
     const tabs = buildTabs(context);
     const extraWarnings: string[] = [];

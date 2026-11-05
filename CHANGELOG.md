@@ -2,6 +2,29 @@
 
 All notable changes to the "keil-assistant-new" extension will be documented in this file.
 
+## [2.6.3] - 2026-11-05
+
+### 新增功能 🚀
+
+- **Debug 页新增「调试器适配器设置（J-Link / J-Trace）」区**：对应 uVision 的 `Debug → Settings`（Cortex JLink/JTrace Target Driver Setup）弹窗
+  - **调试接口 Port**：JTAG / SW
+  - **最大时钟 Max Clock**：50/33/25/20/10/5/3/2/1 MHz、500/200 kHz（同时维护 `-S` 速度码与 `-ZTIFSpeedSel`）
+  - **Connect**：Normal / with Pre-reset / under Reset；**Reset**：Normal / Core / Reset Pin / Connect under Reset / Halt after Bootloader / Halt before Bootloader / Kinetis / ADI Halt after Kernel / Core and Peripherals / LPC1200
+  - **Reset after Connect** 开关
+  - **Interface**：USB / TCP-IP，含 IP 地址与端口（`-JU/-JI/-JP`）
+  - 所有项写入 `.uvoptx` 的 `TargetDriverDllRegistry`（JL2CM3）参数串；仅改动适配器标志位，串号、JTAG 链、Trace 与 Flash 设置逐字节保留
+- 新增模块 `src/project/options/jlinkSettings.ts`（读取/写回/选项表），面板仅在工程存在 J-Link 驱动记录时显示该分区
+
+### 优化改进 ✅
+
+- `npm run smoke` 扩展到 96 项：新增 J-Link 适配器设置读写断言（Port/速度/Connect/Reset/Interface/IP 端口）
+- 扩展版本号更新至 2.6.3
+
+### 已知限制 ⚠️
+
+- Connect / Reset / Reset after Connect 的取值编码依据 uVision J-Link 驱动参数推导，保存后建议在 uVision 的 `Debug → Settings` 中核对一次
+- 工程若尚未在 uVision 中打开过 Debug 设置（缺少 `TargetDriverDllRegistry/JL2CM3` 记录），该分区不会显示，也不会写入
+
 ## [2.6.2] - 2026-11-05
 
 ### 新增功能 🚀

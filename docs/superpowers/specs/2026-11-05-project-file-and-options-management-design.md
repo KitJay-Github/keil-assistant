@@ -567,3 +567,36 @@ export function applyDeviceSelection(xml, targetName, deviceName, catalog): Devi
 - 新测试：`debuggerSelect.test.ts`（21）、`deviceDatabase.test.ts`、`optionsPickers.test.ts`（4）、`panelAssets.test.ts`（搜索框）与 `optionsViewData.test.ts`（生成字段类型）更新。
 - `npm run smoke` 扩展到 **84 项**：真实 Pack 扫描后设备数 >1000、含 `STM32F103CB`；通过面板保存把器件改为 `STM32F103CB`、调试器改为序号 4，校验 `.uvprojx` 的 Device/Vendor/Cpu 与 `.uvoptx` 的 `nTsel/pMon/uSim/uTrg`。
 - 版本号升至 `2.6.2`；`npm test` 265 个用例全绿。
+
+## 9. 附录：2.6.3 增量（J-Link 适配器设置）
+
+uVision 的 `Debug → Settings`（Cortex JLink/JTrace Target Driver Setup）弹窗并不保存在 `DebugOpt`，而是编码在 `.uvoptx` 的
+`Target/ TargetOption/ TargetDriverDllRegistry/ SetRegEntry[Key=JL2CM3]/ Name` 命令行式参数串里：
+
+```
+-U20090928 -O78 -S1 -ZTIFSpeedSel10000 -A0 -C0 -JU1 -JI127.0.0.1 -JP0 -RST0
+  -N00("ARM CoreSight SW-DP") -D00(1BA01477) -L00(0) ... -FO15 -FD20000000 ...
+```
+
+新增 `src/project/options/jlinkSettings.ts` 与该分区（`debug.jlink`）：
+
+| 字段 | 参数 | 说明 |
+| --- | --- | --- |
+| `jlink.port` | `-O` bit6（0x40） | JTAG=14 / SW=78 为常见基值；仅切换端口位，保留 bit0 等其它位 |
+| `jlink.maxClock` | `-S<code>` + `-ZTIFSpeedSel<kHz>` | 速度码表：50/33/25/20/10/5/3/2/1 MHz、500/200 kHz |
+| `jlink.connect` | `-C<0/1/2>` | Normal / with Pre-reset / under Reset |
+| `jlink.reset` | `-RST<0..9>` | Normal/Core/Reset Pin/Connect under Reset/Halt after Bootloader/Halt before Bootloader/Kinetis/ADI Halt after Kernel/Core and Peripherals/LPC1200 |
+| `jlink.resetAfter` | `-O` bit0（0=已勾选，1=未勾选） | 与基线工程 `-O78` + 勾选状态一致 |
+| `jlink.interface` | `-JU<1/0>` | 1=USB，0=TCP/IP |
+| `jlink.ip` / `jlink.tcpPort` | `-JI` / `-JP` | 仅 TCP/IP 使用 |
+
+实现要点：
+
+- 参数串按空格切分并保留 `-N00("...")` 括号内的空格；改写后按原顺序回写，其它标志位逐字节保留；
+- 只替换目标 `SetRegEntry/Name` 的内部文本（基于 `uvXml` 偏移），其余注册表项（UL2CM3、DLG* 等）不动；
+- 工程没有 JL2CM3 记录时分区不显示；保存时若记录缺失则给出 warning 且不写文件；
+- 测试：`jlinkSettings.test.ts`（读写、单字段、幂等、缺记录、未知目标、面板分区）；fixture `arm-ac6-jlink.uvoptx`；
+- `npm run smoke` 扩展到 **96 项**，新增 Port/速度/Connect/Reset/Interface 保存断言；
+- 版本号升至 `2.6.3`，`npm test` 274 个用例全绿。
+
+> 限制：Connect / Reset / Reset after Connect 的编码来自 uVision J-Link 驱动参数推导，保存后建议在 uVision 的 Debug→Settings 中核对一次。

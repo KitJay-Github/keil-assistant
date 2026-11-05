@@ -95,6 +95,7 @@ Keil Assistant 在 VS Code 与 Keil uVision 工程之间搭起桥梁：无需离
 - 新增两个**只读信息区**：`target` 标签页的「MCU 信息」（器件、内核、主频、Flash/RAM 大小与地址、其他片上存储、FPU/DSP/TrustZone/大小端、寄存器头文件、SVD），以及 `debug` 标签页的「调试器 / 下载信息」（调试器名称、驱动 DLL 及**调试器版本**、Flash 下载算法及版本、**uVision 版本**）。
 - `utilities` 中的 **DriverSelection 下拉列表按本机 Keil 的 `TOOLS.INI` 动态生成**（编号 = 4096 + 本机驱动列表序号），并显示当前编号对应的调试器名称；换用其他版本的 Keil 安装时编号含义可能不同。
 - `debug` 标签页新增 **「调试器类型」下拉**：按本机 `TOOLS.INI` 列出全部调试驱动（ULINK2/ME、ULINK Pro、CMSIS-DAP、J-LINK、ST-Link、PULink、Pemicro、SiLabs、TI XDS 等）及「使用仿真器」，保存时同步维护 `.uvoptx` 的 `uSim/uTrg/nTsel/pMon`。
+- `debug` 标签页新增 **「调试器适配器设置（J-Link / J-Trace）」**（对应 uVision 的 Debug→Settings）：调试接口 `Port`（JTAG/SW）、`Max Clock`（50 MHz ~ 200 kHz）、`Connect`（Normal/with Pre-reset/under Reset）、`Reset`（Normal/Core/Reset Pin/Connect under Reset 等 10 种）、`Reset after Connect`、`Interface`（USB / TCP-IP + IP 地址 + 端口）。仅改写 `TargetDriverDllRegistry` 中的适配器标志位，串号、JTAG 链、Trace 与 Flash 设置保持不变。
 - `target` 标签页新增 **「芯片型号」下拉**：扫描本机 CMSIS-Pack 生成设备清单（本机约 1 万个器件，首次后台扫描数秒并缓存），支持搜索过滤；保存后按 Pack 同步更新 `Device`、`Vendor`、`PackID`、`PackURL`、`Cpu`（内核/内存/FPU/DSP/TrustZone）与可解析到的 `SFDFile`/`RegisterFile`。器件切换不会自动重配启动文件与 Flash 算法，请随后在 uVision 中确认。
 
 **支持的 7 个标签页：**

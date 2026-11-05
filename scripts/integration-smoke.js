@@ -47,6 +47,8 @@ fs.mkdirSync(projectDir, { recursive: true });
 for (const name of ['arm-ac6.uvprojx', 'arm-ac6.uvoptx', 'arm-ac5.uvproj', 'arm-ac5.uvopt', 'c51.uvproj', 'c251.uvproj']) {
     fs.copyFileSync(path.join(FIXTURES, name), path.join(projectDir, name));
 }
+// Use the J-Link flavoured companion file so the adapter settings section is rendered.
+fs.copyFileSync(path.join(FIXTURES, 'arm-ac6-jlink.uvoptx'), path.join(projectDir, 'arm-ac6.uvoptx'));
 const sourceDir = path.join(projectDir, 'Application');
 fs.mkdirSync(sourceDir, { recursive: true });
 const newSourcePath = path.join(sourceDir, 'harness_added.c');
@@ -632,6 +634,49 @@ async function main() {
         (uvoptAfterPicker.match(/<pMon>[^<]*<\/pMon>/) || [])[0]
     );
     check('debugger mode set to target', uvoptAfterPicker.indexOf('<uSim>0</uSim>') !== -1 && uvoptAfterPicker.indexOf('<uTrg>1</uTrg>') !== -1);
+
+    /* --- J-Link adapter settings (target driver registry) --- */
+    const jlinkSection = initMessage
+        ? (initMessage.data.tabs.find((tab) => tab.id === 'debug') || { sections: [] }).sections
+            .find((section) => section.id === 'debug.jlink')
+        : undefined;
+    check('J-Link adapter section rendered', !!jlinkSection);
+    check(
+        'J-Link section has all fields',
+        !!jlinkSection && jlinkSection.fields.length === 8,
+        jlinkSection && String(jlinkSection.fields.length)
+    );
+    if (jlinkSection) {
+        const byId = (id) => jlinkSection.fields.find((field) => field.id === id);
+        check('J-Link port read', (byId('jlink.port') || {}).value === 'sw', (byId('jlink.port') || {}).value);
+        check('J-Link speed read', (byId('jlink.maxClock') || {}).value === '10000', (byId('jlink.maxClock') || {}).value);
+        check('J-Link reset-after read', (byId('jlink.resetAfter') || {}).value === '1');
+    }
+
+    postedMessages.length = 0;
+    const uvoptBeforeJlink = readProject('arm-ac6.uvoptx');
+    webviewReceiveHandler({
+        type: 'save',
+        target: 'Demo_Debug',
+        values: {
+            'jlink.port': 'jtag',
+            'jlink.maxClock': '5000',
+            'jlink.connect': 'under-reset',
+            'jlink.reset': 'connect-under-reset',
+            'jlink.interface': 'tcp',
+            'jlink.ip': '192.168.1.20',
+            'jlink.tcpPort': '19020'
+        }
+    });
+    await waitUntil('jlink save posted', () => postedMessages.some((message) => message && message.type === 'saved'), 15000);
+    const uvoptAfterJlink = readProject('arm-ac6.uvoptx');
+    check('J-Link save changed the file', uvoptAfterJlink !== uvoptBeforeJlink);
+    check('J-Link port written', /-O14\b/.test(uvoptAfterJlink), (uvoptAfterJlink.match(/-O\d+/) || [])[0]);
+    check('J-Link speed written', /-S2\b/.test(uvoptAfterJlink) && /-ZTIFSpeedSel5000\b/.test(uvoptAfterJlink));
+    check('J-Link connect written', /-C2\b/.test(uvoptAfterJlink));
+    check('J-Link reset written', /-RST3\b/.test(uvoptAfterJlink));
+    check('J-Link interface written', /-JU0\b/.test(uvoptAfterJlink) && /-JI192\.168\.1\.20\b/.test(uvoptAfterJlink) && /-JP19020\b/.test(uvoptAfterJlink));
+    check('J-Link save keeps the flash settings', /-FF0STM32F10x_128\.FLM/.test(uvoptAfterJlink));
 
     postedMessages.length = 0;
     const beforeSave = readProject('arm-ac6.uvprojx');

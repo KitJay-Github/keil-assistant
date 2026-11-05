@@ -66,7 +66,7 @@ describe('OptionsViewData', () => {
         assert.ok(generatedFields.length > 0, 'expected generated fields');
         for (const generated of generatedFields) {
             assert.ok(
-                generated.type === 'info' || generated.type === 'enum',
+                ['info', 'enum', 'bool', 'string', 'number'].indexOf(generated.type) !== -1,
                 `generated field ${generated.id} has unexpected type ${generated.type}`
             );
         }
