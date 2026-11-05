@@ -2,6 +2,42 @@
 
 All notable changes to the "keil-assistant-new" extension will be documented in this file.
 
+## [2.6.0] - 2026-11-05
+
+### 新增功能 🚀
+
+- **工程文件管理**：在工程树中直接维护分组与文件，无需打开 Keil uVision
+  - 分组：新建、重命名、删除分组
+  - 文件：通过文件对话框添加源文件到分组、新建源文件并加入工程、从工程移除文件、移动文件到其他分组
+  - 编译开关：切换分组 / 文件是否参与编译（`IncludeInBuild`）
+  - 所有操作只作用于当前活动目标，仅修改对应 `<Groups>` 节点并自动刷新工程树
+- **Options for Target 面板**：新增 `project.options` 命令，以 Webview 面板编辑工程选项
+  - 覆盖 `target` / `output` / `ccpp` / `asm` / `linker` / `debug` / `utilities` 共 7 个标签页
+  - 同时读写 `.uvprojx` 与 `.uvopt/.uvoptx` 双文件，支持目标切换、重新加载与打开工程文件
+  - 支持 ARM / ARM6 / C51 / C251 四类工具链；不适用字段自动禁用并说明原因
+- **写回安全机制**
+  - 严格 UTF-8 校验：非 UTF-8 工程文件只读并提示原因，避免破坏中文工程
+  - BOM 保留：写回后保持原文件原有的 UTF-8 BOM 状态
+  - 写前自动备份：默认备份到扩展全局存储目录，不污染用户工程目录
+  - 原子写入与 `EBUSY` 重试：临时文件 + 重命名写入，文件被 uVision 占用时重试 5 次（每次 200ms），仍失败则提示先关闭工程
+- **新增设置** `KeilAssistant.Project.BackupBeforeWrite`（boolean，默认 `true`）：控制写回工程文件前是否自动备份
+- 新增命令：`project.options`、`project.addFilesToGroup`、`project.newFile`、`project.removeFile`、`project.addGroup`、`project.renameGroup`、`project.removeGroup`、`project.moveFileToGroup`、`project.toggleFileInBuild`、`project.toggleGroupInBuild`
+
+### 优化改进 ✅
+
+- 工程树标题栏新增 Options 入口；工程/目标/分组/源文件右键菜单按编辑、文件、选项、编译分组整理
+- README / README_EN 新增工程文件管理与工程选项章节，补充命令表、7 个标签页说明与写回限制
+- 新增 `npm run validate:corpus` 脚本，可对本地 Keil 工程语料批量校验 XML 解析与无编辑 round-trip 一致性
+- 新增 `npm run smoke` 接线冒烟脚本（stub VS Code API），覆盖命令注册、工程文件写回、工程树刷新与 Options 面板读写链路
+- 扩展版本号更新至 2.6.0
+
+### 已知限制 ⚠️
+
+- 不修改 `.uvoptx` 中与调试器注册表（`TargetDriverDllRegistry`）相关的键值，仅处理常规可读写字段
+- 不支持 RTE（Run-Time Environment）组件的增删
+- 工程缺少同名 `.uvopt/.uvoptx` 时，相关字段在面板中标记为不可用，扩展不会自动创建该文件
+- 面板暂不包含断点、变量监控与调试器接入等运行时调试能力
+
 ## [2.5.2] - 2026-03-25
 
 ### 优化改进 ✨

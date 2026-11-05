@@ -30,12 +30,19 @@ npm run webpack:watch
 
 # Run tests
 npm run test
+
+# Wiring smoke test (stub VS Code API; requires `npm run compile`)
+npm run smoke
+
+# Validate every .uvproj/.uvprojx under a directory (defaults to E:\APP\Keil)
+npm run validate:corpus -- --skip-unsupported-toolchain
 ```
 
 ### Key Commands to Run After Changes
 - `npm run compile` - Always run this after TypeScript changes
 - `npm run lint` - Run before committing to catch style issues
 - `npm run vscode:prepublish` - Required before publishing the extension
+- `npm run smoke` - Verifies command wiring, project file writes and the Options panel end to end without a VS Code window
 
 ## High-Level Architecture
 

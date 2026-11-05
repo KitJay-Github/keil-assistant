@@ -19,6 +19,25 @@ import { CmdLineHandler } from './CmdLineHandler';
 import { mergeCppProperties } from './project/cppProperties';
 import { formatPathValidationErrors, validateExecutionPaths } from './project/pathValidation';
 import { buildTreeItemId, findRevealPath, ProjectSortOrder, sortProjects } from './projectExplorer/treeState';
+import {
+    ProjectFileCommandContext,
+    ProjectFileCommandServices,
+    registerProjectFileCommands
+} from './project/projectFileCommands';
+import { UvToolchainKind } from './project/uvGroups';
+import {
+    ProjectTextFile,
+    findCompanionUvoptFile,
+    readProjectTextFile,
+    tryReadProjectTextFile,
+    writeProjectTextFile
+} from './project/projectFileIo';
+import { OPTION_TABS } from './project/options/uvOptionSchema';
+import { applyTargetOptions } from './project/options/uvOptions';
+import { applyUvoptOptions } from './project/options/uvoptFile';
+import { buildOptionsViewData } from './project/options/viewData';
+import { OptionsViewData, OptionApplyResultSummary } from './project/options/types';
+import { OptionsPanel, OptionsPanelHost } from './project/optionsPanel';
 
 // 添加一个消息防重复显示机制
 const messageDebouncer = new Map<string, number>();
@@ -250,6 +269,80 @@ export function activate(context: vscode.ExtensionContext) {
 
     subscriber.push(vscode.commands.registerCommand('project.revealCurrentFile', () => prjExplorer.revealCurrentEditor()));
 
+    // 工程文件管理：新增/删除/重命名分组与文件，切换编译开关
+    const isBackupEnabled = (): boolean => {
+        const value = vscode.workspace.getConfiguration('KeilAssistant.Project').get<boolean>('BackupBeforeWrite', true);
+        return value !== false;
+    };
+
+    const projectFileServices: ProjectFileCommandServices = {
+        resolve: (item: unknown) => prjExplorer.resolveProjectFileContext(item as IView | undefined),
+        applyChange: async (ctx: ProjectFileCommandContext, mutate: (xml: string) => string, options?: { successMessage?: string }) => {
+            const project = prjExplorer.getProjectById(ctx.prjID);
+            if (!project) {
+                showMessage('工程未打开，请先重新打开 Keil 工程。', 'error', 4000);
+                return false;
+            }
+
+            let source: ProjectTextFile;
+            try {
+                source = readProjectTextFile(ctx.projectFile);
+            } catch (error) {
+                showMessage(error instanceof Error ? error.message : String(error), 'error', 4000);
+                return false;
+            }
+
+            let nextXml: string;
+            try {
+                nextXml = mutate(source.text);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                showMessage(`修改工程文件失败：${message}`, 'error', 4000);
+                return false;
+            }
+
+            if (nextXml === source.text) {
+                if (options?.successMessage) {
+                    showMessage(options.successMessage, 'info');
+                }
+                return true;
+            }
+
+            project.noteSelfWrite();
+            const result = await writeProjectTextFile(source, nextXml, {
+                backupDir: isBackupEnabled() ? project.getBackupDir() : undefined
+            });
+            if (!result.ok) {
+                showMessage(result.error || '写入工程文件失败。', 'error', 4000);
+                return false;
+            }
+
+            await prjExplorer.refreshProject(ctx.prjID);
+            if (options?.successMessage) {
+                showMessage(options.successMessage, 'info');
+            }
+            return true;
+        },
+        notify: (kind: 'info' | 'warning' | 'error', message: string) => {
+            showMessage(message, kind, kind === 'info' ? 1500 : 4000);
+        }
+    };
+    subscriber.push(...registerProjectFileCommands(projectFileServices));
+
+    // 工程选项面板
+    subscriber.push(vscode.commands.registerCommand('project.options', (item?: IView) => {
+        const resolved = prjExplorer.getProjectAndTarget(item);
+        if (!resolved) {
+            showMessage('请先选择一个 Keil 工程！', 'warning');
+            return;
+        }
+
+        const host = new KeilOptionsPanelHost(resolved.project, async () => {
+            await prjExplorer.refreshProject(resolved.project.prjID);
+        });
+        OptionsPanel.show(context.extensionUri, host, resolved.targetName);
+    }));
+
     // 注册Chat Tools
     registerChatTools(context, prjExplorer);
 
@@ -257,6 +350,7 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+    OptionsPanel.disposeAll();
     console.log('---- keil-assistant closed ----');
 }
 
@@ -674,6 +768,23 @@ class KeilProject implements IView, KeilProjectInfo {
             // ... rest of the code ...
         }
         // ... existing code ...
+    }
+
+    /** Directory that receives timestamped backups of project files. */
+    getBackupDir(): string {
+        return node_path.join(this.projectStorageDir.path, 'backups');
+    }
+
+    /**
+     * Notify the project that the extension itself is about to rewrite the
+     * project file, so the file watcher does not trigger a redundant reload.
+     */
+    noteSelfWrite(): void {
+        this.prevUpdateTime = Date.now();
+    }
+
+    getTargetNames(): string[] {
+        return this.targetList.map((target) => target.targetName);
     }
 }
 
@@ -1155,6 +1266,29 @@ abstract class Target implements IView {
 
     protected getFilePath(filePath: string): string {
         return PathUtils.toAbsolutePath(PathUtils.toRelativePath(filePath));
+    }
+
+    /** Toolchain family used by this target, derived from the parsed target DOM. */
+    getToolchainKind(): UvToolchainKind {
+        const option = this.targetDOM ? this.targetDOM['TargetOption'] : undefined;
+        if (option) {
+            if (option['Target51'] && option['Target51']['C51']) {
+                return 'C51';
+            }
+            if (option['Target251'] && option['Target251']['C251']) {
+                return 'C251';
+            }
+            if (option['TargetArmAds']) {
+                return this.targetDOM['uAC6'] === '1' ? 'ARM6' : 'ARM';
+            }
+        }
+        if (this instanceof C51Target) {
+            return 'C51';
+        }
+        if (this instanceof C251Target) {
+            return 'C251';
+        }
+        return 'ARM';
     }
 
     protected abstract getDiagnosticRegex(): RegExp;
@@ -2265,7 +2399,7 @@ class ProjectExplorer implements vscode.TreeDataProvider<IView>, vscode.Disposab
         }
     }
 
-    async openProject(path: string, persistActive = true, removeClosed = true): Promise<KeilProject | undefined> {
+    async openProject(path: string, persistActive = true, removeClosed = true, activate = true): Promise<KeilProject | undefined> {
         if (!fs.existsSync(path)) {
             throw new Error(`Keil 工程文件不存在: ${path}`);
         }
@@ -2281,8 +2415,10 @@ class ProjectExplorer implements vscode.TreeDataProvider<IView>, vscode.Disposab
             await nPrj.load();
             nPrj.on('dataChanged', () => this.updateView());
             this.prjList.set(nPrj.prjID, nPrj);
-            // Always activate the newly opened project to match user intent
-            await this.setActiveProject(nPrj, persistActive);
+            if (activate) {
+                // Always activate the newly opened project to match user intent
+                await this.setActiveProject(nPrj, persistActive);
+            }
             if (removeClosed) {
                 await this.removeClosedProjectPath(nPrj.uvprjFile.path);
             }
@@ -2416,6 +2552,7 @@ class ProjectExplorer implements vscode.TreeDataProvider<IView>, vscode.Disposab
     async closeProject(pID: string) {
         const prj = this.prjList.get(pID);
         if (prj) {
+            OptionsPanel.find(pID)?.dispose();
             prj.deactive();
             prj.close();
             this.prjList.delete(pID);
@@ -2585,6 +2722,136 @@ class ProjectExplorer implements vscode.TreeDataProvider<IView>, vscode.Disposab
         return this.prjList.get(prjID);
     }
 
+    public getActiveProject(): KeilProject | undefined {
+        return this.currentActiveProject;
+    }
+
+    /** Locate the project / target / group / file that owns a tree item. */
+    private findTreeItemLocation(item: IView): {
+        project: KeilProject;
+        targetName: string;
+        groupName?: string;
+        filePath?: string;
+    } | undefined {
+        const project = this.prjList.get(item.prjID);
+        if (!project) {
+            return undefined;
+        }
+
+        if (item instanceof KeilProject) {
+            return { project, targetName: project.getActiveTarget()?.targetName || '' };
+        }
+
+        if (item instanceof Target) {
+            return { project, targetName: item.targetName };
+        }
+
+        for (const target of project.getTargets()) {
+            for (const group of target.getChildViews() || []) {
+                if (!(group instanceof FileGroup)) {
+                    continue;
+                }
+                if (group === item) {
+                    return { project, targetName: target.targetName, groupName: group.label };
+                }
+                for (const source of group.sources) {
+                    if (source === item) {
+                        return {
+                            project,
+                            targetName: target.targetName,
+                            groupName: group.label,
+                            filePath: source.file.path
+                        };
+                    }
+                }
+            }
+        }
+
+        return undefined;
+    }
+
+    /** Resolve the context needed by the project file management commands. */
+    public resolveProjectFileContext(item?: IView): ProjectFileCommandContext | undefined {
+        const location = item ? this.findTreeItemLocation(item) : undefined;
+        const project = location ? location.project : this.currentActiveProject;
+        if (!project) {
+            return undefined;
+        }
+
+        const target = location
+            ? (project.getTargetByName(location.targetName) || project.getActiveTarget())
+            : project.getActiveTarget();
+        if (!target) {
+            return undefined;
+        }
+
+        return {
+            prjID: project.prjID,
+            projectFile: project.uvprjFile.path,
+            projectDir: project.uvprjFile.dir,
+            targetName: target.targetName,
+            toolchain: target.getToolchainKind(),
+            groupName: location ? location.groupName : undefined,
+            filePath: location ? location.filePath : undefined
+        };
+    }
+
+    /** Resolve the project and target addressed by a command argument. */
+    public getProjectAndTarget(item?: IView): { project: KeilProject; targetName: string } | undefined {
+        const location = item ? this.findTreeItemLocation(item) : undefined;
+        if (location) {
+            return { project: location.project, targetName: location.targetName };
+        }
+
+        const project = this.currentActiveProject;
+        const target = project?.getActiveTarget();
+        if (!project || !target) {
+            return undefined;
+        }
+        return { project, targetName: target.targetName };
+    }
+
+    /** Reload a single project from disk, keeping its active target when possible. */
+    async refreshProject(prjID: string): Promise<void> {
+        const project = this.prjList.get(prjID);
+        if (!project) {
+            return;
+        }
+
+        const projectPath = project.uvprjFile.path;
+        const activeTargetName = project.getActiveTarget()?.targetName;
+        const wasActive = this.currentActiveProject?.prjID === prjID;
+
+        project.deactive();
+        project.close();
+        this.prjList.delete(prjID);
+        if (wasActive) {
+            this.currentActiveProject = undefined;
+        }
+        this.updateView();
+        this.updateStatusBarVisibility();
+
+        try {
+            const reopened = await this.openProject(projectPath, wasActive, false, wasActive);
+            if (reopened && activeTargetName) {
+                if (reopened.getTargetByName(activeTargetName)) {
+                    await reopened.setActiveTarget(activeTargetName);
+                }
+            }
+            if (!reopened && wasActive) {
+                const existing = Array.from(this.prjList.values()).find(
+                    (candidate) => node_path.normalize(candidate.uvprjFile.path) === node_path.normalize(projectPath)
+                );
+                if (existing) {
+                    await this.setActiveProject(existing, true);
+                }
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            showMessage(`重新加载工程失败！错误信息: ${message}`, 'error', 4000);
+        }
+    }
+
     dispose() {
         // Dispose of any resources managed by ProjectExplorer itself, if any.
         // TreeDataProvider and Commands pushed to context.subscriptions are disposed by VSCode.
@@ -2598,5 +2865,176 @@ class ProjectExplorer implements vscode.TreeDataProvider<IView>, vscode.Disposab
         this.prjList.forEach(prj => prj.close()); // Ensure projects are closed
         this.prjList.clear();
         this.viewEvent.dispose();
+    }
+}
+
+//================================================
+
+/**
+ * OptionsPanelHost 适配层：把 KeilProject 与工程文件读写能力接到 Webview 面板。
+ */
+class KeilOptionsPanelHost implements OptionsPanelHost {
+
+    private readonly refreshProject: () => Promise<void>;
+
+    constructor(private readonly project: KeilProject, refreshProject: () => Promise<void>) {
+        this.refreshProject = refreshProject;
+    }
+
+    get prjID(): string {
+        return this.project.prjID;
+    }
+
+    get projectLabel(): string {
+        return this.project.label;
+    }
+
+    get projectFile(): string {
+        return this.project.uvprjFile.path;
+    }
+
+    private getBackupDir(): string | undefined {
+        const enabled = vscode.workspace.getConfiguration('KeilAssistant.Project').get<boolean>('BackupBeforeWrite', true);
+        return enabled === false ? undefined : this.project.getBackupDir();
+    }
+
+    async loadViewData(targetName?: string): Promise<OptionsViewData> {
+        const projectFile = this.projectFile;
+        const targets = this.project.getTargetNames();
+        const activeTarget = targetName || this.project.getActiveTarget()?.targetName || targets[0] || '';
+        const uvoptPath = findCompanionUvoptFile(projectFile);
+
+        const fallback = (reason: string): OptionsViewData => ({
+            projectLabel: this.projectLabel,
+            projectFile,
+            uvoptFile: uvoptPath,
+            targets,
+            activeTarget,
+            toolchain: '',
+            tabs: [],
+            warnings: [reason],
+            readonly: true,
+            readonlyReason: reason
+        });
+
+        const projectRead = tryReadProjectTextFile(projectFile);
+        if (!projectRead.ok || !projectRead.file) {
+            return fallback(projectRead.error || '无法读取工程文件。');
+        }
+
+        let uvoptText: string | undefined;
+        if (uvoptPath) {
+            const uvoptRead = tryReadProjectTextFile(uvoptPath);
+            if (uvoptRead.ok && uvoptRead.file) {
+                uvoptText = uvoptRead.file.text;
+            }
+        }
+
+        try {
+            const data = buildOptionsViewData({
+                projectLabel: this.projectLabel,
+                projectFile,
+                uvprojxText: projectRead.file.text,
+                uvoptText,
+                activeTarget
+            });
+            return { ...data, uvoptFile: data.uvoptFile || uvoptPath };
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return fallback(`解析工程文件失败：${message}`);
+        }
+    }
+
+    notify(kind: 'info' | 'warning' | 'error', message: string): void {
+        showMessage(message, kind, kind === 'info' ? 1500 : 4000);
+    }
+
+    async saveValues(targetName: string, values: Record<string, string>): Promise<OptionApplyResultSummary> {
+        const fieldFileById = new Map<string, 'uvprojx' | 'uvopt'>();
+        for (const tab of OPTION_TABS) {
+            for (const section of tab.sections) {
+                for (const field of section.fields) {
+                    fieldFileById.set(field.id, field.file);
+                }
+            }
+        }
+
+        const projectValues: Record<string, string> = {};
+        const uvoptValues: Record<string, string> = {};
+        for (const [id, value] of Object.entries(values)) {
+            const fileKind = fieldFileById.get(id);
+            if (!fileKind) {
+                continue;
+            }
+            if (fileKind === 'uvopt') {
+                uvoptValues[id] = value;
+            } else {
+                projectValues[id] = value;
+            }
+        }
+
+        const projectFile = this.projectFile;
+        const changed: string[] = [];
+        const warnings: string[] = [];
+
+        let projectTextFile: ProjectTextFile;
+        try {
+            projectTextFile = readProjectTextFile(projectFile);
+        } catch (error) {
+            throw new Error(error instanceof Error ? error.message : String(error));
+        }
+
+        let nextProjectText = projectTextFile.text;
+        if (Object.keys(projectValues).length > 0) {
+            const applied = applyTargetOptions(nextProjectText, targetName, projectValues);
+            nextProjectText = applied.xml;
+            changed.push(...applied.changed);
+            warnings.push(...applied.warnings);
+        }
+
+        const uvoptPath = findCompanionUvoptFile(projectFile);
+        let uvoptTextFile: ProjectTextFile | undefined;
+        let nextUvoptText = '';
+
+        if (Object.keys(uvoptValues).length > 0) {
+            if (!uvoptPath) {
+                warnings.push('工程缺少 .uvoptx/.uvopt 文件，调试与时钟相关选项未保存。请先在 uVision 中打开并保存工程。');
+            } else {
+                try {
+                    uvoptTextFile = readProjectTextFile(uvoptPath);
+                    const applied = applyUvoptOptions(uvoptTextFile.text, targetName, uvoptValues);
+                    nextUvoptText = applied.xml;
+                    changed.push(...applied.changed);
+                    warnings.push(...applied.warnings);
+                } catch (error) {
+                    warnings.push(`读取工程选项文件失败：${error instanceof Error ? error.message : String(error)}`);
+                }
+            }
+        }
+
+        const projectChanged = nextProjectText !== projectTextFile.text;
+        const uvoptChanged = !!uvoptTextFile && nextUvoptText !== uvoptTextFile.text;
+        if (!projectChanged && !uvoptChanged) {
+            return { changed, warnings };
+        }
+
+        this.project.noteSelfWrite();
+
+        if (projectChanged) {
+            const result = await writeProjectTextFile(projectTextFile, nextProjectText, { backupDir: this.getBackupDir() });
+            if (!result.ok) {
+                throw new Error(result.error || '写入工程文件失败。');
+            }
+        }
+
+        if (uvoptChanged && uvoptTextFile) {
+            const result = await writeProjectTextFile(uvoptTextFile, nextUvoptText, { backupDir: this.getBackupDir() });
+            if (!result.ok) {
+                throw new Error(result.error || '写入工程选项文件失败。');
+            }
+        }
+
+        await this.refreshProject();
+        return { changed, warnings };
     }
 }

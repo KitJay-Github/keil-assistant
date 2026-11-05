@@ -45,6 +45,36 @@ Use Chat Tools with Copilot to:
 - automatic project detection with configurable include and exclude lists
 - multi-core build execution when the toolchain supports it
 
+## Project File Management
+
+Manage Keil groups and files directly from the project explorer. Changes apply to the currently active target and the project tree refreshes automatically after each write.
+
+| Command | Description | Where to find it |
+| --- | --- | --- |
+| `project.options` (Options for Target) | Open the target option panel | Project view title bar, Project/Target context menu, Command Palette |
+| `project.addFilesToGroup` (Add Files to Group) | Add one or more existing source files to a group; files already in the project are skipped | Project/Target/FileGroup context menu |
+| `project.newFile` (New Source File) | Create a template source file in the project directory and add it to a group | Project/Target/FileGroup context menu, Command Palette |
+| `project.addGroup` (New Group) | Create a file group; duplicate names are ignored | Project/Target/FileGroup context menu, Command Palette |
+| `project.renameGroup` (Rename Group) | Rename a group without touching its files | FileGroup context menu |
+| `project.removeGroup` (Remove Group) | Remove a group and its file references after confirmation; files on disk are kept | FileGroup context menu |
+| `project.removeFile` (Remove File) | Remove a file reference from the project after confirmation; the file on disk is kept | Source context menu |
+| `project.moveFileToGroup` (Move File to Group) | Move a file to another group of the same target | Source context menu |
+| `project.toggleFileInBuild` (Toggle File Build) | Flip `IncludeInBuild` (`1`/`0`) for a file | Source context menu |
+| `project.toggleGroupInBuild` (Toggle Group Build) | Flip `IncludeInBuild` (`1`/`0`) for a group | FileGroup context menu |
+
+## Target Options
+
+Run `project.options` to open the webview panel that edits the common settings of Keil's "Options for Target" dialog.
+
+- Header: project name, target selector, Save, Reload and open-project-file actions.
+- Seven tabs: `target`, `output`, `ccpp`, `asm`, `linker`, `debug`, `utilities`.
+- Fields are rendered as inputs, multi-line text areas, checkboxes (`1`/`0`) or selects, using VS Code theme colors.
+- Saving writes to both `.uvprojx` and `.uvopt/.uvoptx`: project options go to the project file, target/debug options go to the companion option file.
+- ARM, ARM6, C51 and C251 toolchains are supported; fields that do not apply to the active toolchain are disabled with an explanation.
+- When no matching `.uvopt/.uvoptx` file exists, its fields (Xtal, debugger entries, ...) are marked unavailable and the extension does not create the file.
+- The extension never rewrites `TargetDriverDllRegistry` entries in `.uvoptx`, and RTE (Run-Time Environment) components cannot be added or removed.
+- Write-back is safe: strict UTF-8 validation, BOM preservation, optional automatic backups (`KeilAssistant.Project.BackupBeforeWrite`, default `true`), atomic writes and `EBUSY` retries (5 attempts, 200 ms apart).
+
 ## Usage Guide 📖
 
 ### 1. Installation Setup
