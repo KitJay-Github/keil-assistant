@@ -293,6 +293,19 @@ button.btn:focus-visible {
     font-size: 0.85em;
 }
 
+.field-value {
+    min-height: 22px;
+    padding: 3px 0;
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-editor-font-family, monospace);
+    word-break: break-all;
+    user-select: text;
+}
+
+.field.info > .field-label {
+    font-weight: 600;
+}
+
 .field.unavailable > .field-label,
 .field.readonly > .field-label {
     opacity: 0.75;
@@ -752,6 +765,9 @@ const OPTIONS_SCRIPT = `
         if (field.readonly) {
             classes.push('readonly');
         }
+        if (field.type === 'info') {
+            classes.push('info');
+        }
         wrapper.className = classes.join(' ');
 
         var controlId = 'field-' + safeId(section.id) + '-' + safeId(field.id);
@@ -773,7 +789,10 @@ const OPTIONS_SCRIPT = `
 
         var disabledReason = '';
         var disabled = false;
-        if (isReadonly()) {
+        if (field.type === 'info') {
+            // Pure information rows: never editable, never disabled-looking.
+            disabled = false;
+        } else if (isReadonly()) {
             disabled = true;
             disabledReason = (state.data && state.data.readonlyReason) || '面板为只读模式';
         } else if (field.unavailable) {
@@ -807,6 +826,11 @@ const OPTIONS_SCRIPT = `
         var value = asText(field.value);
         var control;
         switch (field.type) {
+            case 'info':
+                control = document.createElement('div');
+                control.className = 'field-value';
+                control.textContent = value === '' ? '—' : value;
+                break;
             case 'multiline':
                 control = document.createElement('textarea');
                 control.rows = 4;

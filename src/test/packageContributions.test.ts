@@ -105,8 +105,13 @@ describe('package contributions', () => {
         );
     });
 
-    it('bumps the extension to the 2.6.0 project file and target option release', () => {
-        assert.equal(readPackageJson().version, '2.6.0');
+    it('bumps the extension past the 2.6.0 project file and target option release', () => {
+        const version = readPackageJson().version as string;
+        assert.match(version, /^2\.6\.\d+$/);
+        assert.ok(
+            version.localeCompare('2.6.0', undefined, { numeric: true }) >= 0,
+            `expected version >= 2.6.0, got ${version}`
+        );
     });
 
     it('contributes the project file and target option commands', () => {

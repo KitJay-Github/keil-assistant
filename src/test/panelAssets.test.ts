@@ -94,11 +94,24 @@ describe('panelAssets.buildOptionsHtml', () => {
         assert.ok(HTML.includes("case 'number':"));
         assert.ok(HTML.includes("case 'enum':"));
         assert.ok(HTML.includes("case 'string':"));
+        assert.ok(HTML.includes("case 'info':"), 'read-only information rows need their own branch');
         assert.ok(HTML.includes("createElement('textarea')"), 'multiline fields must render a textarea');
         assert.ok(HTML.includes("createElement('select')"), 'enum fields must render a select');
         assert.ok(HTML.includes("control.type = 'checkbox'"), 'bool fields must render a checkbox');
         assert.ok(HTML.includes("control.type = 'number'"), 'number fields must render a number input');
         assert.ok(HTML.includes("control.type = 'text'"), 'string fields must render a text input');
+        // Info rows render as plain text, not as disabled inputs.
+        assert.ok(HTML.includes("control.className = 'field-value'"));
+        assert.ok(HTML.includes('.field-value'));
+    });
+
+    it('keeps information rows out of dirty tracking and saves', () => {
+        // Info rows are rendered without value handlers, therefore they never
+        // enter `state.dirty`; the save path only sends dirty ids anyway.
+        assert.ok(HTML.includes("field.type === 'info'"));
+        assert.ok(HTML.includes('state.dirty'));
+        const infoBranch = HTML.slice(HTML.indexOf("case 'info':"), HTML.indexOf("case 'multiline':"));
+        assert.equal(infoBranch.includes('makeValueHandler'), false, 'info rows must not be editable');
     });
 
     it('contains the webview side of the message protocol', () => {

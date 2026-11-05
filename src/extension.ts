@@ -33,9 +33,12 @@ import {
     writeProjectTextFile
 } from './project/projectFileIo';
 import { OPTION_TABS } from './project/options/uvOptionSchema';
-import { applyTargetOptions } from './project/options/uvOptions';
-import { applyUvoptOptions } from './project/options/uvoptFile';
-import { buildOptionsViewData } from './project/options/viewData';
+import { applyTargetOptions, readTargetOptions } from './project/options/uvOptions';
+import { applyUvoptOptions, readUvoptOptions } from './project/options/uvoptFile';
+import { buildOptionsViewData, DebuggerInfoInput } from './project/options/viewData';
+import { findDriverByDll, parseToolsIni, resolveDriverDllPath } from './project/options/keilInstall';
+import type { KeilToolsIni } from './project/options/keilInstall';
+import { readFileVersionCached } from './project/fileVersion';
 import { OptionsViewData, OptionApplyResultSummary } from './project/options/types';
 import { OptionsPanel, OptionsPanelHost } from './project/optionsPanel';
 
@@ -2898,6 +2901,116 @@ class KeilOptionsPanelHost implements OptionsPanelHost {
         return enabled === false ? undefined : this.project.getBackupDir();
     }
 
+    private static toolsIniCache = new Map<string, { mtimeMs: number; text: string }>();
+
+    /** uVision executable configured for the toolchain of the active target. */
+    private getUv4Path(toolchain: string | undefined): string {
+        const config = vscode.workspace.getConfiguration('KeilAssistant');
+        if (toolchain === 'C51' || toolchain === 'C251') {
+            return config.get<string>('C51.Uv4Path') || '';
+        }
+        return config.get<string>('MDK.Uv4Path') || '';
+    }
+
+    /** Read (and cache by mtime) the `TOOLS.INI` of the Keil installation. */
+    private readToolsIniCached(keilRoot: string | undefined): { text?: string; info?: KeilToolsIni } {
+        if (!keilRoot) {
+            return {};
+        }
+        const toolsPath = node_path.join(keilRoot, 'TOOLS.INI');
+        try {
+            const stat = fs.statSync(toolsPath);
+            const cached = KeilOptionsPanelHost.toolsIniCache.get(toolsPath);
+            if (cached && cached.mtimeMs === stat.mtimeMs) {
+                return { text: cached.text, info: parseToolsIni(cached.text) };
+            }
+            const text = fs.readFileSync(toolsPath, 'utf8');
+            KeilOptionsPanelHost.toolsIniCache.set(toolsPath, { mtimeMs: stat.mtimeMs, text });
+            return { text, info: parseToolsIni(text) };
+        } catch {
+            return {};
+        }
+    }
+
+    /**
+     * Resolve the debugger / flash driver information for the panel:
+     * adapter name (from TOOLS.INI), driver DLL and its file version, flash
+     * algorithm DLL and the uVision version.
+     */
+    private async buildDebuggerInfo(
+        toolchain: UvToolchainKind | undefined,
+        values: Record<string, string | undefined>,
+        uvoptValues: Record<string, string | undefined>
+    ): Promise<{ toolsIniText?: string; info: DebuggerInfoInput }> {
+        const uv4Path = this.getUv4Path(toolchain);
+        const keilRoot = uv4Path ? node_path.dirname(node_path.dirname(uv4Path)) : undefined;
+        const tools = this.readToolsIniCached(keilRoot);
+        const warnings: string[] = [];
+        const info: DebuggerInfoInput = { warnings };
+        const effectiveToolchain: UvToolchainKind = toolchain || 'ARM';
+
+        if (!uv4Path) {
+            warnings.push('未配置 Keil UV4 路径，无法读取 uVision 与调试器版本');
+        } else {
+            info.uvisionPath = uv4Path;
+            const version = await readFileVersionCached(uv4Path);
+            if (version) {
+                info.uvisionVersion = version;
+            }
+        }
+
+        const pMon = (uvoptValues['debug.uvoptMonitor'] || '').trim();
+        const targetDll = (values['debug.targetDllName'] || '').trim();
+        const targetDriver = (values['debug.targetDllDriver'] || '').trim();
+
+        let driverDll = '';
+        let driverSource = '';
+        if (pMon) {
+            driverDll = pMon;
+            driverSource = '.uvoptx（DebugOpt/pMon）';
+        } else if (targetDll) {
+            driverDll = targetDll;
+            driverSource = '.uvprojx（DllOption/TargetDllName）';
+        } else if (targetDriver) {
+            driverDll = targetDriver;
+            driverSource = '.uvprojx（TargetDlls/Driver）';
+        }
+
+        if (driverDll) {
+            info.driverDll = driverDll;
+            info.driverSource = driverSource;
+            const definition = findDriverByDll(tools.info, driverDll);
+            if (definition) {
+                info.driverName = definition.name;
+            }
+            const dllPath = resolveDriverDllPath(keilRoot, effectiveToolchain, driverDll);
+            if (dllPath) {
+                info.driverDllPath = dllPath;
+                const version = await readFileVersionCached(dllPath);
+                if (version) {
+                    info.driverVersion = version;
+                }
+            } else if (uv4Path) {
+                warnings.push(`未在 Keil 安装目录中找到调试器驱动 DLL：${driverDll}`);
+            }
+        }
+
+        const flashDll = (values['utilities.flash2'] || '').trim();
+        if (flashDll) {
+            info.flashDll = flashDll;
+            const flashPath = resolveDriverDllPath(keilRoot, effectiveToolchain, flashDll);
+            if (flashPath) {
+                info.flashDllPath = flashPath;
+                const version = await readFileVersionCached(flashPath);
+                if (version) {
+                    info.flashVersion = version;
+                }
+            }
+        }
+
+        return { info, ...(tools.text !== undefined ? { toolsIniText: tools.text } : {}) };
+    }
+
     async loadViewData(targetName?: string): Promise<OptionsViewData> {
         const projectFile = this.projectFile;
         const targets = this.project.getTargetNames();
@@ -2930,13 +3043,24 @@ class KeilOptionsPanelHost implements OptionsPanelHost {
             }
         }
 
+        let enrichment: { toolsIniText?: string; info?: DebuggerInfoInput } = {};
+        try {
+            const readResult = readTargetOptions(projectRead.file.text, activeTarget);
+            const uvoptValues = uvoptText !== undefined ? readUvoptOptions(uvoptText, activeTarget) : {};
+            enrichment = await this.buildDebuggerInfo(readResult.toolchain, readResult.values, uvoptValues);
+        } catch {
+            // Unknown toolchain / unreadable target: keep the panel usable without enrichment.
+        }
+
         try {
             const data = buildOptionsViewData({
                 projectLabel: this.projectLabel,
                 projectFile,
                 uvprojxText: projectRead.file.text,
                 uvoptText,
-                activeTarget
+                activeTarget,
+                ...(enrichment.toolsIniText !== undefined ? { keilToolsIniText: enrichment.toolsIniText } : {}),
+                ...(enrichment.info !== undefined ? { debuggerInfo: enrichment.info } : {})
             });
             return { ...data, uvoptFile: data.uvoptFile || uvoptPath };
         } catch (error) {

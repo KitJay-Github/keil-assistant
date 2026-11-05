@@ -92,18 +92,20 @@ Keil Assistant 在 VS Code 与 Keil uVision 工程之间搭起桥梁：无需离
 - 修改后显示未保存标记；保存成功后提示已写回的字段数量，并自动刷新工程树。
 - 保存时同时处理 **`.uvprojx` 与 `.uvopt/.uvoptx` 双文件**：属于 `.uvprojx` 的字段写入工程文件，属于 `.uvopt` 的字段写入选项文件。
 - 支持 ARM、ARM6、C51、C251 四类工具链；当前工具链不适用的字段会自动禁用并说明原因。
+- 新增两个**只读信息区**：`target` 标签页的「MCU 信息」（器件、内核、主频、Flash/RAM 大小与地址、其他片上存储、FPU/DSP/TrustZone/大小端、寄存器头文件、SVD），以及 `debug` 标签页的「调试器 / 下载信息」（调试器名称、驱动 DLL 及**调试器版本**、Flash 下载算法及版本、**uVision 版本**）。
+- `utilities` 中的 **DriverSelection 下拉列表按本机 Keil 的 `TOOLS.INI` 动态生成**（编号 = 4096 + 本机驱动列表序号），并显示当前编号对应的调试器名称；换用其他版本的 Keil 安装时编号含义可能不同。
 
 **支持的 7 个标签页：**
 
 | 标签页 | 主要内容 |
 | --- | --- |
-| `target` Target | 器件（Device/Vendor/PackID）、Cpu 参数、SFD 文件、Flash 驱动、晶振 Xtal、C51/C251 内存模型 |
+| `target` Target | 器件（Device/Vendor/PackID）、Cpu 参数、SFD 文件、Flash 驱动、晶振 Xtal、C51/C251 内存模型；只读「MCU 信息」 |
 | `output` Output | 输出名与输出目录、Listing 目录、可执行文件/库/HEX 生成、调试与浏览信息、批处理文件、32K 合并、编译前后用户程序 |
 | `ccpp` C/C++ | Define/Undefine、Include Paths、Misc Controls、优化等级与优化目标、告警等级、C99/GNU 开关 |
 | `asm` Asm | 汇编宏定义、Include Paths、Misc Controls、Thumb/标准汇编等开关 |
 | `linker` Linker | ARM 分散加载（Scatter）文件、地址范围、Ropi/Rwpi、不链接标准库；C51/C251 的 Lx51 配置 |
-| `debug` Debug | 仿真/目标 DLL、调试器 DLL、Hex 显示选项、运行与停止行为、BeepAtEnd 等 |
-| `utilities` Utilities | Flash 下载算法 DLL、Use Target DLL/External Tool、调试前更新 Flash、bUseTDR、FcArmLst 等 |
+| `debug` Debug | 仿真/目标 DLL、调试器 DLL、Hex 显示选项、运行与停止行为、BeepAtEnd 等；只读「调试器 / 下载信息」 |
+| `utilities` Utilities | Flash 下载算法 DLL、Use Target DLL/External Tool、调试前更新 Flash、bUseTDR、FcArmLst 等；DriverSelection 由本机 TOOLS.INI 生成 |
 
 **`.uvopt/.uvoptx` 限制：**
 

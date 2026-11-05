@@ -71,6 +71,8 @@ Run `project.options` to open the webview panel that edits the common settings o
 - Fields are rendered as inputs, multi-line text areas, checkboxes (`1`/`0`) or selects, using VS Code theme colors.
 - Saving writes to both `.uvprojx` and `.uvopt/.uvoptx`: project options go to the project file, target/debug options go to the companion option file.
 - ARM, ARM6, C51 and C251 toolchains are supported; fields that do not apply to the active toolchain are disabled with an explanation.
+- Two read-only information blocks: **MCU info** on the `target` tab (device, core, clock, flash/RAM size and address, extra on-chip memories, FPU/DSP/TrustZone/endianness, register header, SVD file) and **debugger / flash-download info** on the `debug` tab (debugger name, driver DLL and its file version, flash algorithm DLL and version, uVision version).
+- The `utilities` **DriverSelection** list is generated from the local Keil `TOOLS.INI` (`4096 + driver index`) and shows the debugger name of the stored value; the meaning of a number depends on the uVision installation that wrote the project.
 - When no matching `.uvopt/.uvoptx` file exists, its fields (Xtal, debugger entries, ...) are marked unavailable and the extension does not create the file.
 - The extension never rewrites `TargetDriverDllRegistry` entries in `.uvoptx`, and RTE (Run-Time Environment) components cannot be added or removed.
 - Write-back is safe: strict UTF-8 validation, BOM preservation, optional automatic backups (`KeilAssistant.Project.BackupBeforeWrite`, default `true`), atomic writes and `EBUSY` retries (5 attempts, 200 ms apart).

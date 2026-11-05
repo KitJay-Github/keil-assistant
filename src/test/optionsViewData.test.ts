@@ -52,7 +52,19 @@ describe('OptionsViewData', () => {
                 assert.ok(section.fields.length > 0);
             }
         }
-        assert.equal(allFields(view.tabs).length, OPTION_FIELDS.length);
+        const schemaFieldIds = new Set(OPTION_FIELDS.map((field) => field.id));
+        const renderedFields = allFields(view.tabs);
+        for (const schemaField of OPTION_FIELDS) {
+            assert.ok(
+                renderedFields.some((entry) => entry.id === schemaField.id),
+                `missing schema field ${schemaField.id}`
+            );
+        }
+        // The panel additionally renders generated read-only information rows
+        // (MCU info / resolved driver selection); they must not replace schema fields.
+        const generatedFields = renderedFields.filter((entry) => !schemaFieldIds.has(entry.id));
+        assert.ok(generatedFields.length > 0, 'expected generated info fields');
+        assert.ok(generatedFields.every((entry) => entry.type === 'info'), 'generated fields must be info rows');
         assert.equal(view.readonly, false);
         assert.equal(view.readonlyReason, undefined);
         assert.equal(view.projectLabel, 'Demo');

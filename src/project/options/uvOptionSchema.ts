@@ -265,18 +265,18 @@ const MEMORY_MODEL_OPTIONS: OptionEnumValue[] = [
     { value: '4', label: '4（仅 C251: LARGE）' }
 ];
 
-/** `Utilities/Flash1/DriverSelection` values observed in the corpus. */
+/**
+ * Fallback `Utilities/Flash1/DriverSelection` entries.
+ *
+ * The real value space is installation dependent: uVision writes
+ * `4096 + <0-based index>` of the selected debugger inside the driver list of the
+ * device's CPU group (`CPUDLLn` in `TOOLS.INI`). `viewData.ts` therefore replaces
+ * these options with the drivers of the local Keil installation
+ * (`keilInstall.ts`); only `-1` / `0` are stable across installations.
+ */
 const DRIVER_SELECTION_OPTIONS: OptionEnumValue[] = [
-    { value: '-1', label: '-1（未选择调试驱动）' },
-    { value: '0', label: '0（无驱动）' },
-    { value: '1', label: '1' },
-    { value: '2', label: '2' },
-    { value: '5', label: '5' },
-    { value: '4096', label: '4096（ULINK 系列）' },
-    { value: '4097', label: '4097（ULINK2/ME）' },
-    { value: '4101', label: '4101（CMSIS-DAP）' },
-    { value: '4102', label: '4102' },
-    { value: '4104', label: '4104' }
+    { value: '-1', label: '-1（未选择调试/下载驱动）' },
+    { value: '0', label: '0（未指定，使用默认驱动）' }
 ];
 
 // ---------------------------------------------------------------------------
@@ -891,7 +891,8 @@ const UTILITIES_TAB: OptionTabDef = {
                 field('utilities.driverSelection', '调试/下载驱动选择（DriverSelection）', 'Flash1/DriverSelection', 'enum',
                     'uvprojx', all(utilities('Flash1', 'DriverSelection')), {
                     enumValues: DRIVER_SELECTION_OPTIONS,
-                    tooltip: '该值是 uVision 内部驱动编号，通常由 Options→Debug/Utilities 的调试器选择自动维护。'
+                    tooltip: '编号 = 4096 + 本机 TOOLS.INI 中该调试器的序号；面板会按本机 Keil 安装动态列出全部驱动。' +
+                        '勾选 “使用调试驱动”（UseTargetDll/bUseTDR）时该值仅作记录，实际以 Options→Debug 的调试器为准。'
                 }),
                 field('utilities.flash2', 'Flash 下载算法 DLL', 'Utilities/Flash2', 'string', 'uvprojx',
                     all(utilities('Flash2')), {

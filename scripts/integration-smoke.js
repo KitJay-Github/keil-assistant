@@ -23,6 +23,11 @@ const REPO = path.join(__dirname, '..');
 const EXTENSION_ENTRY = process.env.KEIL_ENTRY || path.join(REPO, 'dist', 'src', 'extension.js');
 const FIXTURES = path.join(REPO, 'src', 'test', 'fixtures');
 
+/** Local Keil installation, when present, enables the driver/version enrichment checks. */
+const KEIL_UV4_PATH = process.env.KEIL_UV4_PATH
+    || (fs.existsSync('C:\\Keil_v5\\UV4\\UV4.exe') ? 'C:\\Keil_v5\\UV4\\UV4.exe' : '');
+const HAS_KEIL_INSTALL = KEIL_UV4_PATH !== '' && fs.existsSync(KEIL_UV4_PATH);
+
 const results = [];
 function check(name, condition, detail) {
     results.push({ name, ok: !!condition, detail });
@@ -62,8 +67,8 @@ let webviewReceiveHandler;
 
 const settings = {
     'KeilAssistant.Project.BackupBeforeWrite': true,
-    'KeilAssistant.MDK.Uv4Path': '',
-    'KeilAssistant.C51.Uv4Path': ''
+    'KeilAssistant.MDK.Uv4Path': KEIL_UV4_PATH,
+    'KeilAssistant.C51.Uv4Path': KEIL_UV4_PATH
 };
 
 const ui = {
@@ -491,6 +496,58 @@ async function main() {
         check('init data is writable', initMessage.data.readonly === false);
         check('init data exposes uvoptFile', !!initMessage.data.uvoptFile, initMessage.data.uvoptFile);
         check('init data toolchain label', !!initMessage.data.toolchain, initMessage.data.toolchain);
+
+        /* --- generated read-only information sections --- */
+        const targetTab = initMessage.data.tabs.find((tab) => tab.id === 'target');
+        const mcuSection = targetTab && targetTab.sections.find((section) => section.id === 'target.mcu');
+        check('MCU info section rendered', !!mcuSection);
+        if (mcuSection) {
+            const mcuField = (id) => mcuSection.fields.find((field) => field.id === id);
+            check('MCU rows are info type', mcuSection.fields.every((field) => field.type === 'info'));
+            check('MCU device shown', (mcuField('mcu.device') || {}).value === 'STM32F407VGTx', (mcuField('mcu.device') || {}).value);
+            check('MCU core shown', /Cortex-M4/.test((mcuField('mcu.core') || {}).value || ''), (mcuField('mcu.core') || {}).value);
+            check('MCU flash shown', /1 MB/.test((mcuField('mcu.flash') || {}).value || ''), (mcuField('mcu.flash') || {}).value);
+            check('MCU ram shown', /128 KB/.test((mcuField('mcu.ram') || {}).value || ''), (mcuField('mcu.ram') || {}).value);
+        }
+
+        const utilitiesTab = initMessage.data.tabs.find((tab) => tab.id === 'utilities');
+        const flashSection = utilitiesTab && utilitiesTab.sections.find((section) => section.id === 'utilities.flash');
+        const driverField = flashSection && flashSection.fields.find((field) => field.id === 'utilities.driverSelection');
+        check('driver selection is an enum', !!driverField && driverField.type === 'enum');
+        check(
+            'driver list is complete',
+            !!driverField && Array.isArray(driverField.options) && driverField.options.length > 2,
+            driverField && driverField.options && String(driverField.options.length)
+        );
+        const driverMeaning = flashSection && flashSection.fields.find((field) => field.id === 'info.utilities.driverSelection');
+        check('driver selection meaning shown', !!driverMeaning && /4096/.test(driverMeaning.value || ''), driverMeaning && driverMeaning.value);
+
+        const debugTab = initMessage.data.tabs.find((tab) => tab.id === 'debug');
+        const hardwareSection = debugTab && debugTab.sections.find((section) => section.id === 'debug.hardware');
+        check('debugger info section rendered', !!hardwareSection);
+        if (hardwareSection) {
+            const infoField = (id) => hardwareSection.fields.find((field) => field.id === id);
+            check('debugger info rows are info type', hardwareSection.fields.every((field) => field.type === 'info'));
+            check('debugger name resolved', /CMSIS-DAP/.test((infoField('info.debugger.name') || {}).value || ''), (infoField('info.debugger.name') || {}).value);
+        }
+
+        if (HAS_KEIL_INSTALL) {
+            check(
+                'driver list uses the local TOOLS.INI',
+                !!driverField && Array.isArray(driverField.options)
+                    && driverField.options.some((option) => /ULINK2\/ME Cortex Debugger/.test(option.label || '')),
+                driverField && JSON.stringify((driverField.options || []).slice(0, 3))
+            );
+            check(
+                'debugger version read from the driver DLL',
+                /^\d+\.\d+/.test(((hardwareSection && hardwareSection.fields.find((field) => field.id === 'info.debugger.version')) || {}).value || ''),
+                hardwareSection && JSON.stringify(hardwareSection.fields.map((field) => [field.id, field.value]))
+            );
+            check(
+                'uVision version shown',
+                /^\d+\.\d+/.test(((hardwareSection && hardwareSection.fields.find((field) => field.id === 'info.debugger.uvision')) || {}).value || '')
+            );
+        }
     }
 
     postedMessages.length = 0;

@@ -463,3 +463,51 @@ export class OptionsPanel {
 4. Options 面板可读写 ARM / ARM6 / C51 / C251 四类工程的公共字段；`.uvopt` 缺失时相关字段标注不可用。
 5. 备份文件生成于全局存储目录，用户工程目录无额外产物。
 6. `vsce` 打包内容包含 `dist/extension.js` 与新命令（可由 `npx @vscode/vsce ls` 验证）。
+
+## 7. 附录：2.6.1 增量（MCU / 调试器信息）
+
+### 7.1 背景
+
+2.6.0 的 `utilities.driverSelection` 使用了根据少量语料推测的枚举（`-1/0/1/2/5/4096/4097/4101/4102/4104`），既不完整，标签也不可靠；同时面板缺少用户最关心的**调试器版本**与 **MCU 信息**。
+
+### 7.2 结论：`DriverSelection` 不是全局稳定枚举
+
+对 1022 个真实工程（2260 个目标）与 `TOOLS.INI` 的交叉分析表明：
+
+- `Utilities/Flash1/DriverSelection` = `4096 + 本机驱动列表中该调试器的 0 基序号`；
+- 该列表来自本机 `TOOLS.INI` 的 `CPUDLLn` → `TDRVn` 映射，不同 uVision 版本/安装的列表与顺序可能不同；
+- 当 `bUseTDR=1`（使用调试驱动）时 uVision 忽略该值，因此语料中大量工程的该字段是**过期值**（这也是 `4096` 出现最多的原因）；
+- 真正的“当前调试器”以 `.uvopt/.uvoptx` 的 `DebugOpt/pMon` 为准（其次 `.uvprojx` 的 `DllOption/TargetDllName`）。
+
+因此不再维护静态枚举，而是按本机安装动态生成。
+
+### 7.3 新增模块
+
+| 模块 | 职责 |
+| --- | --- |
+| `src/project/options/keilInstall.ts` | 解析 `TOOLS.INI`（`[ARM]/[C51]/[C251]` 的 `PATH/VERSION/CPUDLL/TDRV`）；`cpuFamilyOf` 判定 `arm7/cortex-m/cortex-r/armv8-m/c51/c251`；`driverSelectionOptions` 生成 `4096 + 序号` 列表；`findDriverByDll` 按 DLL 反查驱动名；`resolveDriverDllPath` 在 `ARM/BIN`、`C51/BIN` 等目录下解析 DLL 绝对路径 |
+| `src/project/options/mcuInfo.ts` | 解析 Keil `Cpu` 描述（`IRAM/IROM/IRAM2/XRAM/XRAM2/OCR_RVCTn`、`CPUTYPE`、`CLOCK`、`FPU/DSP/TZ/ELITTLE`）；`formatBytes`/`formatAddress`；`buildMcuInfoRows` 生成只读展示行（`mcu.device/core/clock/flash/ram/otherMemories/features/registerFile/svdFile`） |
+| `src/project/fileVersion.ts` | 零依赖读取 PE `VS_VERSIONINFO` 的 `FileVersion`/`ProductVersion`（PE32/PE32+、资源目录、UTF-16 字符串），失败回退 PowerShell；按 `路径 + mtime` 缓存 |
+
+### 7.4 面板增量
+
+- 新增 `OptionValueType = 'info'`：只读信息行，纯文本渲染，不参与脏值跟踪与保存。
+- `target` 标签页首部新增只读「MCU 信息（只读）」分区。
+- `debug` 标签页尾部新增只读「调试器 / 下载信息（只读）」分区：调试器名称、驱动 DLL、驱动版本、Flash 算法 DLL/版本、uVision 版本。
+- `utilities.driverSelection` 的选项由 `viewData` 用本机 `TOOLS.INI` 覆盖，并插入 `info.utilities.driverSelection` 行解释当前编号。
+- `BuildOptionsViewDataInput` 新增两个可选输入：`keilToolsIniText`（本机 `TOOLS.INI` 原文）与 `debuggerInfo`（宿主解析的 DLL 路径/版本）；宿主在 `extension.ts` 的 `KeilOptionsPanelHost.loadViewData` 中填充。
+
+### 7.5 测试增量
+
+| 测试文件 | 覆盖点 |
+| --- | --- |
+| `keilInstall.test.ts` | `TOOLS.INI` 解析；CPU 家族判定；四类列表生成与 fallback；DLL 反查；路径解析（含临时目录构造） |
+| `mcuInfo.test.ts` | 5 类真实 `Cpu` 字符串；逗号/范围内存；B/KB/MB 格式化；C51/C251 行省略规则；语料扫描 0 异常 |
+| `fileVersion.test.ts` | 非 PE/目录/缺失 → `undefined`；合成 PE32/PE32+；`ProductVersion` 回退；mtime 缓存；真实 `UV4.exe`/`UL2CM3.DLL` |
+| `optionsInfoSections.test.ts` | MCU 分区、驱动列表与编号解释、调试器信息分区、缺失配置占位、C51 最小列表 |
+| `panelAssets.test.ts`（扩展） | `info` 渲染分支、信息行不进入脏值跟踪 |
+
+### 7.6 验收增量
+
+- `npm test` 全绿（207 个用例）；`npm run smoke` 新增 MCU/驱动列表/调试器版本断言（本机存在 Keil 时启用，68 项检查）。
+- 版本号升至 `2.6.1`。

@@ -15,8 +15,12 @@ export type UvToolchainKind = 'ARM' | 'ARM6' | 'C51' | 'C251';
 /** Option tabs mirroring the Keil "Options for Target" dialog. */
 export type OptionTabId = 'target' | 'output' | 'ccpp' | 'asm' | 'linker' | 'debug' | 'utilities';
 
-/** Input control used to edit an option field. */
-export type OptionValueType = 'string' | 'multiline' | 'bool' | 'number' | 'enum';
+/**
+ * Input control used to edit an option field.
+ * `info` renders a read-only text value (used by the generated MCU / debugger
+ * information sections); it never takes part in dirty tracking or saving.
+ */
+export type OptionValueType = 'string' | 'multiline' | 'bool' | 'number' | 'enum' | 'info';
 
 /** Project file that owns a given option field. */
 export type OptionFileKind = 'uvprojx' | 'uvopt';

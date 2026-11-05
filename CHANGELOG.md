@@ -2,6 +2,32 @@
 
 All notable changes to the "keil-assistant-new" extension will be documented in this file.
 
+## [2.6.1] - 2026-11-05
+
+### 新增功能 🚀
+
+- **Options 面板新增只读「MCU 信息」区**（`target` 标签页）：
+  - 从工程中的 `Device` / `Cpu` 描述解析器件型号、厂商、芯片包、内核（CPUTYPE）、主频、Flash / RAM 大小与起始地址、其他片上存储（`IRAM2`/`XRAM`/`OCR_RVCTn` 等）
+  - 识别 `FPU`/`FPU2`/`FPU3`、`DSP`、`TrustZone`、大小端，并显示寄存器头文件与 SVD 文件
+  - 覆盖 ARM / ARM6 / C51 / C251 四类工程（C51/C251 显示 `MCS-51 (8051)` / `MCS-251` 内核与片上存储）
+- **Options 面板新增只读「调试器 / 下载信息」区**（`debug` 标签页）：
+  - 调试器名称（由 `.uvoptx` 的 `DebugOpt/pMon` 或 `.uvprojx` 的 `DllOption` 解析，并对照本机 `TOOLS.INI` 得到可读名称）
+  - 调试器驱动 DLL 与 **调试器版本**（读取 DLL 的 PE `VERSIONINFO` 文件版本）
+  - Flash 下载算法 DLL 及其版本、**uVision 版本**（`UV4.exe` 文件版本）
+- **`DriverSelection` 下拉列表补全**：改为按**本机 Keil 安装的 `TOOLS.INI`** 动态生成（编号 = 4096 + 本机驱动列表序号，完整列出本机全部调试驱动），不再使用不完整的推测列表；同时显示当前编号对应的调试器名称
+- 新增零依赖模块：`src/project/fileVersion.ts`（PE `VERSIONINFO` 解析，含 PowerShell 回退）、`src/project/options/mcuInfo.ts`（Cpu 描述解析）、`src/project/options/keilInstall.ts`（`TOOLS.INI` 解析与驱动匹配）
+
+### 优化改进 ✅
+
+- 面板新增 `info` 只读字段类型：以纯文本渲染，不参与脏值跟踪与保存
+- `npm run smoke` 增加 MCU 信息、驱动列表、调试器版本、uVision 版本的端到端断言（本机存在 Keil 安装时启用）
+- 扩展版本号更新至 2.6.1
+
+### 已知限制 ⚠️
+
+- `DriverSelection` 编号依赖生成该工程的 uVision 安装；跨版本安装时编号可能不一致，面板会标注「未在本机驱动列表中」；勾选「使用调试驱动」时该值仅作记录
+- 调试器 / 下载信息为只读展示，实际调试器与下载参数仍以 uVision 的 Options→Debug/Utilities 为准
+
 ## [2.6.0] - 2026-11-05
 
 ### 新增功能 🚀
